@@ -1,0 +1,9 @@
+.bmad-core/
+.cursor/
+.gemini/
+.qwen/
+.github/
+.trae/
+.vscode/
+.windsurf/
+web-bundles/
