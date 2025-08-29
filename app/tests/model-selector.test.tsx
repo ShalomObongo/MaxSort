@@ -1,10 +1,18 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react';
+import { act } from 'react';
 import React from 'react';
 import ModelSelector from '../src/renderer/components/ModelSelector';
 
 // Mock the CSS import
 vi.mock('../src/renderer/components/ModelSelector.css', () => ({}));
+
+// Extend Window interface for Electron API
+declare global {
+  interface Window {
+    electronAPI: typeof mockElectronAPI;
+  }
+}
 
 // Mock electron API with all required properties
 const mockElectronAPI = {
@@ -95,21 +103,28 @@ describe('ModelSelector', () => {
     });
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    // Wait for any pending promises to resolve
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 0));
+    });
+    cleanup();
     vi.restoreAllMocks();
   });
 
   describe('Loading State', () => {
-    it('should show loading state initially', () => {
+    it('should show loading state initially', async () => {
       // Make the health check take a while
       mockElectronAPI.getOllamaHealth.mockImplementation(() => 
         new Promise(resolve => setTimeout(() => resolve(mockHealthyStatus), 1000))
       );
-      
-      render(<ModelSelector onModelSelected={mockOnModelSelected} />);
-      
-      expect(screen.getByText('Loading Ollama models...')).toBeInTheDocument();
-      expect(screen.getByText('⟳')).toBeInTheDocument();
+
+      await act(async () => {
+        render(<ModelSelector onModelSelected={mockOnModelSelected} />);
+      });
+
+      expect(screen.getByText('Loading Ollama models...')).toBeDefined();
+      expect(screen.getByText('⟳')).toBeDefined();
     });
   });
 
@@ -121,30 +136,32 @@ describe('ModelSelector', () => {
     });
 
     it('should display available models when Ollama is healthy', async () => {
-      render(<ModelSelector onModelSelected={mockOnModelSelected} />);
+      await act(async () => {
+        render(<ModelSelector onModelSelected={mockOnModelSelected} />);
+      });
       
       await waitFor(() => {
-        expect(screen.getByText('Configure AI Models')).toBeInTheDocument();
+        expect(screen.getByText('Configure AI Models')).toBeDefined();
       });
 
       await waitFor(() => {
-        expect(screen.getByText('llama2:7b')).toBeInTheDocument();
-        expect(screen.getByText('codellama:13b')).toBeInTheDocument();
+        expect(screen.getByText('llama2:7b')).toBeDefined();
+        expect(screen.getByText('codellama:13b')).toBeDefined();
       });
       
       // Check health indicator
-      expect(screen.getByText('Ollama: healthy')).toBeInTheDocument();
-      expect(screen.getByText('(2 models)')).toBeInTheDocument();
+      expect(screen.getByText('Ollama: healthy')).toBeDefined();
+      expect(screen.getByText('(2 models)')).toBeDefined();
     });
 
     it('should display model details correctly', async () => {
       render(<ModelSelector onModelSelected={mockOnModelSelected} />);
       
       await waitFor(() => {
-        expect(screen.getByText('7B')).toBeInTheDocument();
-        expect(screen.getByText('13B')).toBeInTheDocument();
-        expect(screen.getByText('Q4_0')).toBeInTheDocument();
-        expect(screen.getByText('Q4_K_M')).toBeInTheDocument();
+        expect(screen.getByText('7B')).toBeDefined();
+        expect(screen.getByText('13B')).toBeDefined();
+        expect(screen.getByText('Q4_0')).toBeDefined();
+        expect(screen.getByText('Q4_K_M')).toBeDefined();
       });
     });
 
@@ -155,14 +172,14 @@ describe('ModelSelector', () => {
       render(<ModelSelector onModelSelected={mockOnModelSelected} />);
       
       await waitFor(() => {
-        expect(screen.getByText('llama2:7b')).toBeInTheDocument();
+        expect(screen.getByText('llama2:7b')).toBeDefined();
       });
 
       // Find and click the model card in the Main Agent section
       const mainAgentCards = screen.getAllByText('llama2:7b');
       const mainAgentCard = mainAgentCards[0].closest('.model-card');
       
-      expect(mainAgentCard).toBeInTheDocument();
+      expect(mainAgentCard).toBeDefined();
       fireEvent.click(mainAgentCard!);
       
       await waitFor(() => {
@@ -188,9 +205,9 @@ describe('ModelSelector', () => {
       render(<ModelSelector onModelSelected={mockOnModelSelected} />);
       
       await waitFor(() => {
-        expect(screen.getByText('Current Selection')).toBeInTheDocument();
-        expect(screen.getByText('Main Agent:')).toBeInTheDocument();
-        expect(screen.getByText('Sub Agent:')).toBeInTheDocument();
+        expect(screen.getByText('Current Selection')).toBeDefined();
+        expect(screen.getByText('Main Agent:')).toBeDefined();
+        expect(screen.getByText('Sub Agent:')).toBeDefined();
       });
     });
   });
@@ -204,19 +221,19 @@ describe('ModelSelector', () => {
       render(<ModelSelector onModelSelected={mockOnModelSelected} />);
       
       await waitFor(() => {
-        expect(screen.getByText('Ollama Not Available')).toBeInTheDocument();
-        expect(screen.getByText('🚫')).toBeInTheDocument();
+        expect(screen.getByText('Ollama Not Available')).toBeDefined();
+        expect(screen.getByText('🚫')).toBeDefined();
       });
 
-      expect(screen.getByText('Troubleshooting:')).toBeInTheDocument();
-      expect(screen.getByText('🔄 Retry Connection')).toBeInTheDocument();
+      expect(screen.getByText('Troubleshooting:')).toBeDefined();
+      expect(screen.getByText('🔄 Retry Connection')).toBeDefined();
     });
 
     it('should handle retry connection', async () => {
       render(<ModelSelector onModelSelected={mockOnModelSelected} />);
       
       await waitFor(() => {
-        expect(screen.getByText('🔄 Retry Connection')).toBeInTheDocument();
+        expect(screen.getByText('🔄 Retry Connection')).toBeDefined();
       });
 
       const retryButton = screen.getByText('🔄 Retry Connection');
@@ -240,12 +257,12 @@ describe('ModelSelector', () => {
       render(<ModelSelector onModelSelected={mockOnModelSelected} />);
       
       await waitFor(() => {
-        expect(screen.getByText('No Models Available')).toBeInTheDocument();
-        expect(screen.getByText('📦')).toBeInTheDocument();
+        expect(screen.getByText('No Models Available')).toBeDefined();
+        expect(screen.getByText('📦')).toBeDefined();
       });
 
-      expect(screen.getByText('Get Started:')).toBeInTheDocument();
-      expect(screen.getByText('🔄 Refresh Models')).toBeInTheDocument();
+      expect(screen.getByText('Get Started:')).toBeDefined();
+      expect(screen.getByText('🔄 Refresh Models')).toBeDefined();
     });
   });
 
@@ -262,7 +279,7 @@ describe('ModelSelector', () => {
       render(<ModelSelector onModelSelected={mockOnModelSelected} />);
       
       await waitFor(() => {
-        expect(screen.getByText('llama2:7b')).toBeInTheDocument();
+        expect(screen.getByText('llama2:7b')).toBeDefined();
       });
 
       // Click on model card
@@ -289,7 +306,7 @@ describe('ModelSelector', () => {
       render(<ModelSelector onModelSelected={mockOnModelSelected} />);
       
       await waitFor(() => {
-        expect(screen.getByText('llama2:7b')).toBeInTheDocument();
+        expect(screen.getByText('llama2:7b')).toBeDefined();
       });
 
       // Click on model card to start validation
@@ -298,14 +315,14 @@ describe('ModelSelector', () => {
       
       // Should show validating state
       await waitFor(() => {
-        expect(screen.getByText('⟳')).toBeInTheDocument();
+        expect(screen.getByText('⟳')).toBeDefined();
       });
       
       // Resolve validation
       resolveValidation!(true);
       
       await waitFor(() => {
-        expect(screen.getByText('✓')).toBeInTheDocument();
+        expect(screen.getByText('✓')).toBeDefined();
       });
     });
   });
@@ -321,7 +338,7 @@ describe('ModelSelector', () => {
       render(<ModelSelector onModelSelected={mockOnModelSelected} disabled={true} />);
       
       await waitFor(() => {
-        expect(screen.getByText('llama2:7b')).toBeInTheDocument();
+        expect(screen.getByText('llama2:7b')).toBeDefined();
       });
 
       const modelCard = screen.getAllByText('llama2:7b')[0].closest('.model-card');
@@ -337,7 +354,7 @@ describe('ModelSelector', () => {
       render(<ModelSelector onModelSelected={mockOnModelSelected} />);
       
       await waitFor(() => {
-        expect(screen.getByText('Failed to connect to Ollama. Please ensure Ollama is running.')).toBeInTheDocument();
+        expect(screen.getByText('Failed to connect to Ollama. Please ensure Ollama is running.')).toBeDefined();
       });
     });
   });
@@ -353,7 +370,7 @@ describe('ModelSelector', () => {
       render(<ModelSelector onModelSelected={mockOnModelSelected} />);
       
       await waitFor(() => {
-        expect(screen.getByText('🔄')).toBeInTheDocument();
+        expect(screen.getByText('🔄')).toBeDefined();
       });
 
       const refreshButton = screen.getByText('🔄');

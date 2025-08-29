@@ -31,6 +31,67 @@ export interface JobRecord {
   errorMessage?: string;
 }
 
+export interface SuggestionRecord {
+  id?: number;
+  fileId: number;
+  requestId: string;
+  analysisType: 'rename-suggestions' | 'classification' | 'content-summary' | 'metadata-extraction';
+  suggestedValue: string;
+  originalConfidence: number;
+  adjustedConfidence: number;
+  qualityScore: number;
+  reasoning?: string;
+  modelUsed: string;
+  analysisDuration: number;
+  modelVersion?: string;
+  contentHash?: string;
+  validationFlags?: string;
+  rankPosition: number;
+  isRecommended: boolean;
+  createdAt?: number;
+  updatedAt?: number;
+}
+
+export interface AnalysisSessionRecord {
+  id: string;
+  sessionType: 'interactive' | 'batch';
+  rootPath?: string;
+  analysisTypes: string;
+  totalFiles: number;
+  processedFiles: number;
+  completedFiles: number;
+  failedFiles: number;
+  startedAt: number;
+  completedAt?: number;
+  totalDuration?: number;
+  averageFileDuration?: number;
+  successRate: number;
+  errorSummary?: string;
+  modelsUsed?: string;
+  status: 'running' | 'completed' | 'cancelled' | 'error';
+  errorMessage?: string;
+  createdAt?: number;
+  updatedAt?: number;
+}
+
+export interface ModelMetricRecord {
+  id?: number;
+  modelName: string;
+  analysisType: string;
+  totalAnalyses: number;
+  successfulAnalyses: number;
+  failedAnalyses: number;
+  averageDuration: number;
+  averageConfidence: number;
+  averageQuality: number;
+  peakMemoryMb: number;
+  averageMemoryMb: number;
+  periodStart: number;
+  periodEnd?: number;
+  createdAt?: number;
+  updatedAt?: number;
+}
+
 class DatabaseManager {
   private db: Database.Database;
   private isInitialized: boolean = false;
@@ -186,6 +247,122 @@ class DatabaseManager {
           CREATE INDEX IF NOT EXISTS idx_agent_tasks_priority ON agent_tasks(priority);
           CREATE INDEX IF NOT EXISTS idx_agent_tasks_type ON agent_tasks(type);
           CREATE INDEX IF NOT EXISTS idx_agent_tasks_created ON agent_tasks(created_at);
+        `
+      },
+      {
+        version: 4,
+        description: 'Add rename suggestions storage tables',
+        sql: `
+          -- Suggestions table for storing AI-generated rename suggestions
+          CREATE TABLE IF NOT EXISTS suggestions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            file_id INTEGER NOT NULL,
+            request_id TEXT NOT NULL,
+            analysis_type TEXT NOT NULL CHECK (analysis_type IN ('rename-suggestions', 'classification', 'content-summary', 'metadata-extraction')),
+            
+            -- AI response data
+            suggested_value TEXT NOT NULL,        -- The suggested filename/classification/summary
+            original_confidence INTEGER NOT NULL, -- AI-provided confidence (0-100)
+            adjusted_confidence INTEGER NOT NULL, -- Confidence after processing (0-100)
+            quality_score INTEGER NOT NULL,       -- Overall quality assessment (0-100)
+            reasoning TEXT,                       -- AI reasoning explanation
+            
+            -- Analysis metadata
+            model_used TEXT NOT NULL,             -- Ollama model name used
+            analysis_duration INTEGER NOT NULL,   -- Analysis time in milliseconds
+            model_version TEXT,                   -- Model version if available
+            content_hash TEXT,                    -- Hash of analyzed content for deduplication
+            
+            -- Validation and ranking
+            validation_flags TEXT,                -- JSON array of validation issues
+            rank_position INTEGER DEFAULT 0,     -- Ranking among suggestions for this file
+            is_recommended BOOLEAN DEFAULT FALSE, -- Whether this suggestion is recommended
+            
+            -- System tracking
+            created_at INTEGER DEFAULT (unixepoch()),
+            updated_at INTEGER DEFAULT (unixepoch()),
+            
+            FOREIGN KEY (file_id) REFERENCES files (id) ON DELETE CASCADE
+          );
+
+          -- Indexes for efficient querying
+          CREATE INDEX IF NOT EXISTS idx_suggestions_file_id ON suggestions(file_id);
+          CREATE INDEX IF NOT EXISTS idx_suggestions_request_id ON suggestions(request_id);
+          CREATE INDEX IF NOT EXISTS idx_suggestions_analysis_type ON suggestions(analysis_type);
+          CREATE INDEX IF NOT EXISTS idx_suggestions_confidence ON suggestions(adjusted_confidence);
+          CREATE INDEX IF NOT EXISTS idx_suggestions_quality ON suggestions(quality_score);
+          CREATE INDEX IF NOT EXISTS idx_suggestions_model ON suggestions(model_used);
+          CREATE INDEX IF NOT EXISTS idx_suggestions_created ON suggestions(created_at);
+          CREATE INDEX IF NOT EXISTS idx_suggestions_recommended ON suggestions(is_recommended);
+
+          -- Analysis sessions table for tracking analysis requests
+          CREATE TABLE IF NOT EXISTS analysis_sessions (
+            id TEXT PRIMARY KEY,                  -- Request ID
+            session_type TEXT NOT NULL,           -- 'interactive' or 'batch'
+            root_path TEXT,                       -- Root path for batch analysis
+            analysis_types TEXT NOT NULL,         -- JSON array of analysis types requested
+            
+            -- Progress tracking
+            total_files INTEGER DEFAULT 0,
+            processed_files INTEGER DEFAULT 0,
+            completed_files INTEGER DEFAULT 0,
+            failed_files INTEGER DEFAULT 0,
+            
+            -- Timing and performance
+            started_at INTEGER NOT NULL,
+            completed_at INTEGER,
+            total_duration INTEGER,               -- Total execution time in milliseconds
+            average_file_duration INTEGER,       -- Average time per file in milliseconds
+            
+            -- Results summary
+            success_rate REAL DEFAULT 0.0,       -- Percentage of successful analyses
+            error_summary TEXT,                   -- JSON array of common errors
+            models_used TEXT,                     -- JSON array of models used
+            
+            -- Status
+            status TEXT NOT NULL DEFAULT 'running' CHECK (status IN ('running', 'completed', 'cancelled', 'error')),
+            error_message TEXT,
+            
+            created_at INTEGER DEFAULT (unixepoch()),
+            updated_at INTEGER DEFAULT (unixepoch())
+          );
+
+          CREATE INDEX IF NOT EXISTS idx_analysis_sessions_status ON analysis_sessions(status);
+          CREATE INDEX IF NOT EXISTS idx_analysis_sessions_type ON analysis_sessions(session_type);
+          CREATE INDEX IF NOT EXISTS idx_analysis_sessions_started ON analysis_sessions(started_at);
+          CREATE INDEX IF NOT EXISTS idx_analysis_sessions_completed ON analysis_sessions(completed_at);
+
+          -- Model performance metrics table
+          CREATE TABLE IF NOT EXISTS model_metrics (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            model_name TEXT NOT NULL,
+            analysis_type TEXT NOT NULL,
+            
+            -- Performance metrics
+            total_analyses INTEGER DEFAULT 0,
+            successful_analyses INTEGER DEFAULT 0,
+            failed_analyses INTEGER DEFAULT 0,
+            average_duration INTEGER DEFAULT 0,    -- Average analysis time in milliseconds
+            average_confidence REAL DEFAULT 0.0,   -- Average confidence score
+            average_quality REAL DEFAULT 0.0,      -- Average quality score
+            
+            -- Memory usage
+            peak_memory_mb INTEGER DEFAULT 0,
+            average_memory_mb INTEGER DEFAULT 0,
+            
+            -- Tracking period
+            period_start INTEGER NOT NULL,        -- Start of measurement period
+            period_end INTEGER,                    -- End of measurement period
+            
+            created_at INTEGER DEFAULT (unixepoch()),
+            updated_at INTEGER DEFAULT (unixepoch()),
+            
+            UNIQUE(model_name, analysis_type, period_start)
+          );
+
+          CREATE INDEX IF NOT EXISTS idx_model_metrics_model ON model_metrics(model_name);
+          CREATE INDEX IF NOT EXISTS idx_model_metrics_type ON model_metrics(analysis_type);
+          CREATE INDEX IF NOT EXISTS idx_model_metrics_period ON model_metrics(period_start, period_end);
         `
       }
     ];
@@ -404,6 +581,270 @@ class DatabaseManager {
     `).get() as { totalFiles: number; totalSize: number; lastScanDate: number | null };
 
     return fileStats;
+  }
+
+  /**
+   * Suggestion storage and retrieval methods
+   */
+
+  /**
+   * Insert a suggestion record
+   */
+  public insertSuggestion(suggestion: Omit<SuggestionRecord, 'id' | 'createdAt' | 'updatedAt'>): number {
+    const stmt = this.db.prepare(`
+      INSERT INTO suggestions (
+        file_id, request_id, analysis_type, suggested_value, original_confidence, 
+        adjusted_confidence, quality_score, reasoning, model_used, analysis_duration,
+        model_version, content_hash, validation_flags, rank_position, is_recommended
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    const result = stmt.run(
+      suggestion.fileId,
+      suggestion.requestId,
+      suggestion.analysisType,
+      suggestion.suggestedValue,
+      suggestion.originalConfidence,
+      suggestion.adjustedConfidence,
+      suggestion.qualityScore,
+      suggestion.reasoning || null,
+      suggestion.modelUsed,
+      suggestion.analysisDuration,
+      suggestion.modelVersion || null,
+      suggestion.contentHash || null,
+      suggestion.validationFlags || null,
+      suggestion.rankPosition,
+      suggestion.isRecommended ? 1 : 0
+    );
+
+    return result.lastInsertRowid as number;
+  }
+
+  /**
+   * Get suggestions for a specific file
+   */
+  public getSuggestionsByFileId(fileId: number, analysisType?: string): SuggestionRecord[] {
+    let sql = 'SELECT * FROM suggestions WHERE file_id = ?';
+    let params: any[] = [fileId];
+
+    if (analysisType) {
+      sql += ' AND analysis_type = ?';
+      params.push(analysisType);
+    }
+
+    sql += ' ORDER BY rank_position ASC, adjusted_confidence DESC';
+
+    const stmt = this.db.prepare(sql);
+    return stmt.all(...params) as SuggestionRecord[];
+  }
+
+  /**
+   * Get suggestions by request ID
+   */
+  public getSuggestionsByRequestId(requestId: string): SuggestionRecord[] {
+    const stmt = this.db.prepare(`
+      SELECT s.*, f.path as file_path, f.fileName as file_name 
+      FROM suggestions s
+      LEFT JOIN files f ON s.file_id = f.id
+      WHERE s.request_id = ?
+      ORDER BY s.file_id, s.rank_position ASC
+    `);
+    return stmt.all(requestId) as SuggestionRecord[];
+  }
+
+  /**
+   * Get top suggestions for multiple files
+   */
+  public getTopSuggestions(fileIds: number[], analysisType: string, limit: number = 3): SuggestionRecord[] {
+    const placeholders = fileIds.map(() => '?').join(',');
+    const stmt = this.db.prepare(`
+      SELECT s.*, f.path as file_path, f.fileName as file_name
+      FROM suggestions s
+      LEFT JOIN files f ON s.file_id = f.id
+      WHERE s.file_id IN (${placeholders})
+        AND s.analysis_type = ?
+        AND s.rank_position <= ?
+      ORDER BY s.file_id, s.rank_position ASC
+    `);
+    
+    return stmt.all(...fileIds, analysisType, limit) as SuggestionRecord[];
+  }
+
+  /**
+   * Update suggestion recommendation status
+   */
+  public updateSuggestionRecommendation(suggestionId: number, isRecommended: boolean): void {
+    const stmt = this.db.prepare(`
+      UPDATE suggestions 
+      SET is_recommended = ?, updated_at = unixepoch()
+      WHERE id = ?
+    `);
+    stmt.run(isRecommended ? 1 : 0, suggestionId);
+  }
+
+  /**
+   * Delete suggestions for a file
+   */
+  public deleteSuggestionsByFileId(fileId: number): number {
+    const stmt = this.db.prepare('DELETE FROM suggestions WHERE file_id = ?');
+    const result = stmt.run(fileId);
+    return result.changes;
+  }
+
+  /**
+   * Analysis session management
+   */
+
+  /**
+   * Create analysis session record
+   */
+  public createAnalysisSession(session: Omit<AnalysisSessionRecord, 'createdAt' | 'updatedAt'>): void {
+    const stmt = this.db.prepare(`
+      INSERT INTO analysis_sessions (
+        id, session_type, root_path, analysis_types, total_files, processed_files,
+        completed_files, failed_files, started_at, completed_at, total_duration,
+        average_file_duration, success_rate, error_summary, models_used, status, error_message
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    stmt.run(
+      session.id,
+      session.sessionType,
+      session.rootPath || null,
+      session.analysisTypes,
+      session.totalFiles,
+      session.processedFiles,
+      session.completedFiles,
+      session.failedFiles,
+      session.startedAt,
+      session.completedAt || null,
+      session.totalDuration || null,
+      session.averageFileDuration || null,
+      session.successRate,
+      session.errorSummary || null,
+      session.modelsUsed || null,
+      session.status,
+      session.errorMessage || null
+    );
+  }
+
+  /**
+   * Update analysis session
+   */
+  public updateAnalysisSession(sessionId: string, updates: Partial<AnalysisSessionRecord>): void {
+    const fields = Object.keys(updates).filter(key => key !== 'id').map(key => `${key} = ?`);
+    if (fields.length === 0) return;
+
+    fields.push('updated_at = unixepoch()');
+    const values = Object.keys(updates)
+      .filter(key => key !== 'id')
+      .map(key => (updates as any)[key]);
+    values.push(sessionId);
+
+    const stmt = this.db.prepare(`UPDATE analysis_sessions SET ${fields.join(', ')} WHERE id = ?`);
+    stmt.run(...values);
+  }
+
+  /**
+   * Get analysis session
+   */
+  public getAnalysisSession(sessionId: string): AnalysisSessionRecord | undefined {
+    const stmt = this.db.prepare('SELECT * FROM analysis_sessions WHERE id = ?');
+    return stmt.get(sessionId) as AnalysisSessionRecord | undefined;
+  }
+
+  /**
+   * Get recent analysis sessions
+   */
+  public getRecentAnalysisSessions(limit: number = 10): AnalysisSessionRecord[] {
+    const stmt = this.db.prepare('SELECT * FROM analysis_sessions ORDER BY started_at DESC LIMIT ?');
+    return stmt.all(limit) as AnalysisSessionRecord[];
+  }
+
+  /**
+   * Model metrics management
+   */
+
+  /**
+   * Update model performance metrics
+   */
+  public updateModelMetrics(metrics: Omit<ModelMetricRecord, 'id' | 'createdAt' | 'updatedAt'>): void {
+    const stmt = this.db.prepare(`
+      INSERT INTO model_metrics (
+        model_name, analysis_type, total_analyses, successful_analyses, failed_analyses,
+        average_duration, average_confidence, average_quality, peak_memory_mb,
+        average_memory_mb, period_start, period_end
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(model_name, analysis_type, period_start) DO UPDATE SET
+        total_analyses = excluded.total_analyses,
+        successful_analyses = excluded.successful_analyses,
+        failed_analyses = excluded.failed_analyses,
+        average_duration = excluded.average_duration,
+        average_confidence = excluded.average_confidence,
+        average_quality = excluded.average_quality,
+        peak_memory_mb = excluded.peak_memory_mb,
+        average_memory_mb = excluded.average_memory_mb,
+        period_end = excluded.period_end,
+        updated_at = unixepoch()
+    `);
+
+    stmt.run(
+      metrics.modelName,
+      metrics.analysisType,
+      metrics.totalAnalyses,
+      metrics.successfulAnalyses,
+      metrics.failedAnalyses,
+      metrics.averageDuration,
+      metrics.averageConfidence,
+      metrics.averageQuality,
+      metrics.peakMemoryMb,
+      metrics.averageMemoryMb,
+      metrics.periodStart,
+      metrics.periodEnd || null
+    );
+  }
+
+  /**
+   * Get model metrics for analysis
+   */
+  public getModelMetrics(modelName?: string, analysisType?: string): ModelMetricRecord[] {
+    let sql = 'SELECT * FROM model_metrics WHERE 1=1';
+    const params: any[] = [];
+
+    if (modelName) {
+      sql += ' AND model_name = ?';
+      params.push(modelName);
+    }
+
+    if (analysisType) {
+      sql += ' AND analysis_type = ?';
+      params.push(analysisType);
+    }
+
+    sql += ' ORDER BY period_start DESC';
+
+    const stmt = this.db.prepare(sql);
+    return stmt.all(...params) as ModelMetricRecord[];
+  }
+
+  /**
+   * Cleanup old suggestions and metrics
+   */
+  public cleanupOldData(daysToKeep: number = 30): { suggestionsDeleted: number; metricsDeleted: number } {
+    const cutoffTime = Math.floor(Date.now() / 1000) - (daysToKeep * 24 * 60 * 60);
+
+    // Delete old suggestions
+    const suggestionsStmt = this.db.prepare('DELETE FROM suggestions WHERE created_at < ?');
+    const suggestionsResult = suggestionsStmt.run(cutoffTime);
+
+    // Delete old metrics
+    const metricsStmt = this.db.prepare('DELETE FROM model_metrics WHERE created_at < ?');
+    const metricsResult = metricsStmt.run(cutoffTime);
+
+    return {
+      suggestionsDeleted: suggestionsResult.changes,
+      metricsDeleted: metricsResult.changes,
+    };
   }
 
   /**

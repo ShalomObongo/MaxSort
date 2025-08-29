@@ -94,10 +94,14 @@ Swapins:                                   10000.
 Swapouts:                                   5000.
 `;
 
-      // Mock spawn for vm_stat
+      // Mock spawn for vm_stat with proper EventEmitter interface
       const mockVmStat = new EventEmitter() as any;
       mockVmStat.stdout = new EventEmitter();
-      mockVmStat.kill = vi.fn();
+      mockVmStat.kill = vi.fn().mockImplementation(() => {
+        mockVmStat.emit('exit', 0);
+        return true;
+      });
+      mockVmStat.killed = false;
       
       vi.mocked(spawn).mockImplementation((command) => {
         if (command === 'vm_stat') {
@@ -143,8 +147,14 @@ Swapouts:                                   5000.
     });
 
     it('should handle vm_stat errors gracefully', async () => {
-      // Mock spawn to return error
+      // Mock spawn to return error with proper kill method
       const mockVmStat = new EventEmitter() as any;
+      mockVmStat.kill = vi.fn().mockImplementation(() => {
+        mockVmStat.emit('exit', 1);
+        return true;
+      });
+      mockVmStat.killed = false;
+      
       vi.mocked(spawn).mockImplementation(() => {
         setTimeout(() => {
           mockVmStat.emit('error', new Error('Command not found'));
@@ -158,6 +168,11 @@ Swapouts:                                   5000.
     it('should calculate available agent memory correctly', async () => {
       const mockVmStat = new EventEmitter() as any;
       mockVmStat.stdout = new EventEmitter();
+      mockVmStat.kill = vi.fn().mockImplementation(() => {
+        mockVmStat.emit('exit', 0);
+        return true;
+      });
+      mockVmStat.killed = false;
       
       // Mock abundant free memory
       const vmStatOutput = `
@@ -187,10 +202,20 @@ Pages speculative:                        500000.
 
       const mockUptime = new EventEmitter() as any;
       mockUptime.stdout = new EventEmitter();
+      mockUptime.kill = vi.fn().mockImplementation(() => {
+        mockUptime.emit('exit', 0);
+        return true;
+      });
+      mockUptime.killed = false;
       
       // Mock vm_stat first, then uptime
       const mockVmStat = new EventEmitter() as any;
       mockVmStat.stdout = new EventEmitter();
+      mockVmStat.kill = vi.fn().mockImplementation(() => {
+        mockVmStat.emit('exit', 0);
+        return true;
+      });
+      mockVmStat.killed = false;
 
       vi.mocked(spawn).mockImplementation((command) => {
         if (command === 'uptime') {
@@ -221,8 +246,19 @@ Pages speculative:                        500000.
 
     it('should handle uptime errors gracefully', async () => {
       const mockUptime = new EventEmitter() as any;
+      mockUptime.kill = vi.fn().mockImplementation(() => {
+        mockUptime.emit('exit', 1);
+        return true;
+      });
+      mockUptime.killed = false;
+      
       const mockVmStat = new EventEmitter() as any;
       mockVmStat.stdout = new EventEmitter();
+      mockVmStat.kill = vi.fn().mockImplementation(() => {
+        mockVmStat.emit('exit', 0);
+        return true;
+      });
+      mockVmStat.killed = false;
 
       vi.mocked(spawn).mockImplementation((command) => {
         if (command === 'uptime') {
@@ -248,10 +284,15 @@ Pages speculative:                        500000.
     it('should detect system stress based on memory pressure', async () => {
       // Mock high memory pressure scenario
       const vmStatOutput = 'Pages free: 100000.\n'; // Very low free pages
-      const uptimeOutput = 'load averages: 0.5 0.4 0.3'; // Low CPU load
+      const uptimeOutput = ' 14:30  up 1 day, load averages: 0.5 0.4 0.3'; // Low CPU load
 
       const mockProcess = new EventEmitter() as any;
       mockProcess.stdout = new EventEmitter();
+      mockProcess.kill = vi.fn().mockImplementation(() => {
+        mockProcess.emit('exit', 0);
+        return true;
+      });
+      mockProcess.killed = false;
 
       vi.mocked(spawn).mockImplementation((command) => {
         setTimeout(() => {
@@ -274,10 +315,15 @@ Pages speculative:                        500000.
     it('should detect system stress based on CPU load', async () => {
       // Mock high CPU load scenario
       const vmStatOutput = 'Pages free: 2000000.\n'; // Plenty of free memory
-      const uptimeOutput = 'load averages: 3.5 3.0 2.8'; // High CPU load
+      const uptimeOutput = ' 14:30  up 1 day, load averages: 3.5 3.0 2.8'; // High CPU load
 
       const mockProcess = new EventEmitter() as any;
       mockProcess.stdout = new EventEmitter();
+      mockProcess.kill = vi.fn().mockImplementation(() => {
+        mockProcess.emit('exit', 0);
+        return true;
+      });
+      mockProcess.killed = false;
 
       vi.mocked(spawn).mockImplementation((command) => {
         setTimeout(() => {
@@ -302,10 +348,15 @@ Pages speculative:                        500000.
     it('should emit health updates during monitoring', async () => {
       const mockProcess = new EventEmitter() as any;
       mockProcess.stdout = new EventEmitter();
+      mockProcess.kill = vi.fn().mockImplementation(() => {
+        mockProcess.emit('exit', 0);
+        return true;
+      });
+      mockProcess.killed = false;
 
       vi.mocked(spawn).mockImplementation(() => {
         setTimeout(() => {
-          mockProcess.stdout.emit('data', 'Pages free: 1000000.\nload averages: 1.0 1.0 1.0');
+          mockProcess.stdout.emit('data', 'Pages free: 1000000.\n');
           mockProcess.emit('close', 0);
         }, 10);
         return mockProcess;
@@ -326,6 +377,11 @@ Pages speculative:                        500000.
 
     it('should emit monitoring errors', async () => {
       const mockProcess = new EventEmitter() as any;
+      mockProcess.kill = vi.fn().mockImplementation(() => {
+        mockProcess.emit('exit', 1);
+        return true;
+      });
+      mockProcess.killed = false;
 
       vi.mocked(spawn).mockImplementation(() => {
         setTimeout(() => {

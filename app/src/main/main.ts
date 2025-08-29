@@ -2,11 +2,12 @@ import { app, BrowserWindow, ipcMain, dialog } from 'electron';
 import * as path from 'path';
 import * as fs from 'fs/promises';
 import { createScannerWorker, type ScanOptions, type WorkerMessage, type FileMetadata } from '../workers/file-scanner';
-import { getDatabase, type FileRecord } from '../lib/database-mock';
+import { getDatabase, type FileRecord } from '../lib/database';
 import { getOllamaClient, type OllamaModel, type OllamaHealthStatus } from '../lib/ollama-client';
 import { getAgentManager, type AgentManagerStatus } from '../agents/agent-manager';
 import { TaskPriority, type CreateTaskParams, type FileAnalysisTask, type BatchProcessingTask, type HealthCheckTask } from '../agents/task-types';
 import { Worker } from 'worker_threads';
+import { logger } from '../lib/logger';
 
 let mainWindow: BrowserWindow | null = null;
 let currentScanWorker: Worker | null = null;
@@ -76,7 +77,7 @@ app.on('window-all-closed', async () => {
   
   // Cleanup Agent Manager
   if (agentManager) {
-    console.log('Shutting down Agent Manager...');
+    logger.info('MainProcess', 'Shutting down Agent Manager...');
     await agentManager.stop();
     agentManager = null;
   }
@@ -682,4 +683,256 @@ ipcMain.handle('agent:getPerformanceMetrics', async () => {
     memoryUtilization: 0,
     systemHealth: agentManager.getStatus().systemHealth,
   };
+});
+
+// ========================
+// File Analysis IPC Endpoints
+// ========================
+
+/**
+ * Start file analysis for selected files or directory
+ */
+ipcMain.handle('analysis:start', async (_event, request: {
+  requestId: string;
+  fileIds?: number[];
+  rootPath?: string;
+  analysisTypes: string[];
+  isInteractive: boolean;
+  priority: 'high' | 'normal' | 'low';
+  modelName?: string;
+}) => {
+  try {
+    const { getFileAnalysisService } = await import('../lib/file-analysis-service');
+    const analysisService = getFileAnalysisService();
+    
+    await analysisService.initialize();
+    
+    // Cast analysis types to proper enum values
+    const analysisRequest = {
+      ...request,
+      analysisTypes: request.analysisTypes as ('rename-suggestions' | 'classification' | 'content-summary' | 'metadata-extraction')[],
+    };
+    
+    const requestId = await analysisService.startAnalysis(analysisRequest);
+    
+    console.log(`Analysis started: ${requestId}`);
+    return { success: true, requestId };
+    
+  } catch (error) {
+    console.error('Failed to start analysis:', error);
+    return { 
+      success: false, 
+      error: error instanceof Error ? error.message : String(error) 
+    };
+  }
+});
+
+/**
+ * Cancel active analysis
+ */
+ipcMain.handle('analysis:cancel', async (_event, requestId: string, reason?: string) => {
+  try {
+    const { getFileAnalysisService } = await import('../lib/file-analysis-service');
+    const analysisService = getFileAnalysisService();
+    
+    const success = await analysisService.cancelAnalysis(requestId, reason);
+    
+    console.log(`Analysis ${requestId} ${success ? 'cancelled' : 'not found'}`);
+    return { success };
+    
+  } catch (error) {
+    console.error('Failed to cancel analysis:', error);
+    return { 
+      success: false, 
+      error: error instanceof Error ? error.message : String(error) 
+    };
+  }
+});
+
+/**
+ * Get analysis progress for a request
+ */
+ipcMain.handle('analysis:getProgress', async (_event, requestId: string) => {
+  try {
+    const { getFileAnalysisService } = await import('../lib/file-analysis-service');
+    const analysisService = getFileAnalysisService();
+    
+    const progress = analysisService.getAnalysisProgress(requestId);
+    return { success: true, progress };
+    
+  } catch (error) {
+    console.error('Failed to get analysis progress:', error);
+    return { 
+      success: false, 
+      error: error instanceof Error ? error.message : String(error) 
+    };
+  }
+});
+
+/**
+ * Get analysis results for a request
+ */
+ipcMain.handle('analysis:getResults', async (_event, requestId: string) => {
+  try {
+    const { getFileAnalysisService } = await import('../lib/file-analysis-service');
+    const analysisService = getFileAnalysisService();
+    
+    const results = analysisService.getAnalysisResults(requestId);
+    return { success: true, results };
+    
+  } catch (error) {
+    console.error('Failed to get analysis results:', error);
+    return { 
+      success: false, 
+      error: error instanceof Error ? error.message : String(error) 
+    };
+  }
+});
+
+/**
+ * Get suggestions from database for specific files
+ */
+ipcMain.handle('suggestions:getByFileIds', async (_event, fileIds: number[], analysisType?: string) => {
+  try {
+    const database = getDatabase();
+    
+    const suggestions = database.getTopSuggestions(fileIds, analysisType || 'rename-suggestions', 5);
+    return { success: true, suggestions };
+    
+  } catch (error) {
+    console.error('Failed to get suggestions:', error);
+    return { 
+      success: false, 
+      error: error instanceof Error ? error.message : String(error) 
+    };
+  }
+});
+
+/**
+ * Update suggestion recommendation status
+ */
+ipcMain.handle('suggestions:updateRecommendation', async (_event, suggestionId: number, isRecommended: boolean) => {
+  try {
+    const database = getDatabase();
+    
+    database.updateSuggestionRecommendation(suggestionId, isRecommended);
+    return { success: true };
+    
+  } catch (error) {
+    console.error('Failed to update suggestion:', error);
+    return { 
+      success: false, 
+      error: error instanceof Error ? error.message : String(error) 
+    };
+  }
+});
+
+/**
+ * Get analysis session history
+ */
+ipcMain.handle('analysis:getSessionHistory', async (_event, limit?: number) => {
+  try {
+    const database = getDatabase();
+    
+    const sessions = database.getRecentAnalysisSessions(limit || 10);
+    return { success: true, sessions };
+    
+  } catch (error) {
+    console.error('Failed to get session history:', error);
+    return { 
+      success: false, 
+      error: error instanceof Error ? error.message : String(error) 
+    };
+  }
+});
+
+/**
+ * Get model performance metrics
+ */
+ipcMain.handle('analysis:getModelMetrics', async (_event, modelName?: string, analysisType?: string) => {
+  try {
+    const database = getDatabase();
+    
+    const metrics = database.getModelMetrics(modelName, analysisType);
+    return { success: true, metrics };
+    
+  } catch (error) {
+    console.error('Failed to get model metrics:', error);
+    return { 
+      success: false, 
+      error: error instanceof Error ? error.message : String(error) 
+    };
+  }
+});
+
+// Initialize File Analysis Service and setup event forwarding
+let fileAnalysisServiceInitialized = false;
+
+const initializeAnalysisService = async () => {
+  if (fileAnalysisServiceInitialized) return;
+  
+  try {
+    const { getFileAnalysisService } = await import('../lib/file-analysis-service');
+    const analysisService = getFileAnalysisService();
+    
+    // Setup event forwarding to renderer
+    analysisService.on('analysis-started', (data) => {
+      if (mainWindow) {
+        mainWindow.webContents.send('analysis:started', data);
+      }
+    });
+    
+    analysisService.on('preview-update', (data) => {
+      if (mainWindow) {
+        mainWindow.webContents.send('analysis:previewUpdate', data);
+      }
+    });
+    
+    analysisService.on('progress-update', (progress) => {
+      if (mainWindow) {
+        mainWindow.webContents.send('analysis:progressUpdate', progress);
+      }
+    });
+    
+    analysisService.on('analysis-complete', (result) => {
+      if (mainWindow) {
+        mainWindow.webContents.send('analysis:complete', result);
+      }
+    });
+    
+    analysisService.on('analysis-cancelled', (data) => {
+      if (mainWindow) {
+        mainWindow.webContents.send('analysis:cancelled', data);
+      }
+    });
+    
+    analysisService.on('analysis-error', (data) => {
+      if (mainWindow) {
+        mainWindow.webContents.send('analysis:error', data);
+      }
+    });
+    
+    analysisService.on('emergency-mode', (data) => {
+      if (mainWindow) {
+        mainWindow.webContents.send('analysis:emergencyMode', data);
+      }
+    });
+    
+    analysisService.on('tasks-generated', (data) => {
+      if (mainWindow) {
+        mainWindow.webContents.send('analysis:tasksGenerated', data);
+      }
+    });
+    
+    fileAnalysisServiceInitialized = true;
+    console.log('File Analysis Service event forwarding initialized');
+    
+  } catch (error) {
+    console.error('Failed to initialize File Analysis Service:', error);
+  }
+};
+
+// Initialize when app is ready
+app.whenReady().then(async () => {
+  await initializeAnalysisService();
 });

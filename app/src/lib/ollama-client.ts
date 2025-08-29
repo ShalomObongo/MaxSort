@@ -17,6 +17,15 @@ export interface OllamaModel {
   };
 }
 
+export interface OllamaGenerateResponse {
+  response: string;
+  done: boolean;
+  total_duration?: number;
+  load_duration?: number;
+  prompt_eval_duration?: number;
+  eval_duration?: number;
+}
+
 export interface OllamaModelsResponse {
   models: OllamaModel[];
 }
@@ -362,7 +371,7 @@ export class OllamaClient extends EventEmitter {
           throw new Error(`Ollama inference failed: HTTP ${response?.status || 'unknown'} - ${response?.statusText || 'unknown error'}`);
         }
 
-        const result = await response.json();
+        const result = await response.json() as OllamaGenerateResponse;
         const executionTimeMs = Date.now() - startTime;
 
         // Emit inference metrics for monitoring
