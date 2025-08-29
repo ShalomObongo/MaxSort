@@ -9,10 +9,10 @@
     "strict": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
-    "outDir": "./dist/main",
-    "rootDir": "./src/main",
+    "outDir": "./dist",
+    "rootDir": "./src",
     "types": ["node", "electron"]
   },
-  "include": ["src/main/**/*"],
+  "include": ["src/main/**/*", "src/workers/**/*", "src/lib/**/*"],
   "exclude": ["node_modules", "dist", "src/renderer"]
 }

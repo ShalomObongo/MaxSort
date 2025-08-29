@@ -13,12 +13,12 @@
         sans-serif;
       -webkit-font-smoothing: antialiased;
       -moz-osx-font-smoothing: grayscale;
-      overflow: hidden; /* Prevent scrollbars in Electron */
+      /* Allow scrolling in Electron app */
     }
     
     #root {
       width: 100vw;
-      height: 100vh;
+      min-height: 100vh; /* Changed from height to min-height to allow expansion */
     }
   </style>
 </head>

@@ -4,37 +4,65 @@
   min-height: 100vh;
   display: flex;
   flex-direction: column;
-  align-items: center;
-  justify-content: center;
   color: white;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
     'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
     sans-serif;
 }
 
+/* Sticky header that stays at top */
 .App-header {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  background: rgba(102, 126, 234, 0.95);
+  backdrop-filter: blur(10px);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: 2rem;
-  max-width: 600px;
+  padding: 1rem 2rem;
+  max-width: 100%;
+  margin: 0;
+  box-shadow: 0 2px 20px rgba(0, 0, 0, 0.1);
+  -webkit-app-region: drag; /* Make header draggable on macOS/Windows */
 }
 
+/* Make interactive elements in header non-draggable */
+.App-header button,
+.App-header input,
+.App-header select,
+.App-header a {
+  -webkit-app-region: no-drag;
+}
+
+/* Updated main content area with constrained width */
+.App-main {
+  flex: 1;
+  padding: 2rem;
+  width: 100%;
+  max-width: 800px;
+  margin: 0 auto;
+  -webkit-app-region: no-drag; /* Ensure main content is not draggable */
+  overflow-y: auto; /* Allow scrolling in main content */
+}
+
+/* Updated logo styling for compact header */
 .logo {
   display: flex;
   align-items: center;
-  gap: 1rem;
-  margin-bottom: 2rem;
+  gap: 0.75rem;
+  margin-bottom: 0.5rem;
 }
 
 .logo h1 {
-  font-size: 3rem;
+  font-size: 2rem;
   margin: 0;
   font-weight: 300;
 }
 
 .logo-icon {
-  font-size: 3rem;
+  font-size: 2rem;
   animation: pulse 2s infinite;
 }
 
@@ -43,30 +71,32 @@
   50% { transform: scale(1.1); }
 }
 
+/* Compact welcome content for header */
 .welcome-content h2 {
-  font-size: 2rem;
-  margin-bottom: 1rem;
-  font-weight: 300;
+  font-size: 1.4rem;
+  margin: 0.25rem 0;
+  font-weight: 400;
 }
 
 .welcome-content p {
-  font-size: 1.2rem;
-  margin-bottom: 1rem;
+  font-size: 0.9rem;
+  margin: 0.25rem 0;
   opacity: 0.9;
 }
 
 .app-info {
   background: rgba(255, 255, 255, 0.1);
-  border-radius: 8px;
-  padding: 1rem;
-  margin: 1rem 0;
+  border-radius: 6px;
+  padding: 0.5rem;
+  margin: 0.5rem 0 0 0;
   backdrop-filter: blur(10px);
 }
 
 .app-info p {
-  font-size: 1rem;
-  margin: 0.5rem 0;
+  font-size: 0.8rem;
+  margin: 0;
   font-family: 'Monaco', 'Menlo', monospace;
+  opacity: 0.8;
 }
 
 .getting-started {
@@ -81,4 +111,51 @@
   font-size: 1rem;
   margin: 0.8rem 0;
   line-height: 1.6;
+}
+
+.directory-status {
+  text-align: center;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  padding: 1rem;
+  margin-top: 2rem;
+  backdrop-filter: blur(10px);
+}
+
+.directory-status p {
+  color: #a8e6a3;
+  font-weight: 600;
+  margin: 0;
+  font-size: 1.1rem;
+}
+
+.ready-status {
+  text-align: center;
+  background: rgba(40, 167, 69, 0.2);
+  border: 1px solid rgba(40, 167, 69, 0.4);
+  border-radius: 12px;
+  padding: 1.5rem;
+  margin: 1.5rem auto;
+  max-width: 650px;
+  backdrop-filter: blur(10px);
+}
+
+.ready-status h3 {
+  color: #a8e6a3;
+  margin: 0 0 1rem 0;
+  font-size: 1.5rem;
+  font-weight: 600;
+}
+
+.status-details {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.status-details p {
+  color: #ffffff;
+  margin: 0;
+  font-size: 1rem;
+  opacity: 0.9;
 }
