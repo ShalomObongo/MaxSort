@@ -364,6 +364,58 @@ class DatabaseManager {
           CREATE INDEX IF NOT EXISTS idx_model_metrics_type ON model_metrics(analysis_type);
           CREATE INDEX IF NOT EXISTS idx_model_metrics_period ON model_metrics(period_start, period_end);
         `
+      },
+      {
+        version: 5,
+        description: 'Add operations table for undo/redo support',
+        sql: `
+          -- Operations table for tracking file operations and enabling undo/redo
+          CREATE TABLE IF NOT EXISTS operations (
+            id TEXT PRIMARY KEY,                     -- Unique operation ID
+            transaction_id TEXT NOT NULL,            -- Groups related operations
+            batch_id TEXT,                          -- Groups operations in the same batch
+            parent_operation_id TEXT,               -- For dependent operations
+            
+            -- Operation details
+            operation_type TEXT NOT NULL CHECK (operation_type IN ('rename', 'move', 'delete', 'copy')),
+            file_id INTEGER,                        -- Reference to files table
+            source_path TEXT NOT NULL,              -- Original file path
+            target_path TEXT,                       -- New file path (for rename/move)
+            
+            -- Status and timing
+            status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'in_progress', 'completed', 'failed', 'rolled_back')),
+            created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+            started_at INTEGER,
+            completed_at INTEGER,
+            
+            -- Undo support
+            undo_data TEXT,                         -- JSON data needed for undo
+            backup_path TEXT,                       -- Path to backup file if created
+            
+            -- Metadata
+            file_size INTEGER DEFAULT 0,
+            file_hash TEXT,
+            original_mtime INTEGER,
+            error_message TEXT,
+            user_id TEXT,                           -- User who initiated the operation
+            
+            -- Performance tracking
+            duration_ms INTEGER DEFAULT 0,
+            
+            FOREIGN KEY (file_id) REFERENCES files (id) ON DELETE SET NULL,
+            FOREIGN KEY (parent_operation_id) REFERENCES operations (id) ON DELETE CASCADE
+          );
+
+          -- Indexes for efficient querying
+          CREATE INDEX IF NOT EXISTS idx_operations_transaction ON operations(transaction_id);
+          CREATE INDEX IF NOT EXISTS idx_operations_batch ON operations(batch_id);
+          CREATE INDEX IF NOT EXISTS idx_operations_status ON operations(status);
+          CREATE INDEX IF NOT EXISTS idx_operations_type ON operations(operation_type);
+          CREATE INDEX IF NOT EXISTS idx_operations_file_id ON operations(file_id);
+          CREATE INDEX IF NOT EXISTS idx_operations_created ON operations(created_at);
+          CREATE INDEX IF NOT EXISTS idx_operations_user ON operations(user_id);
+          CREATE INDEX IF NOT EXISTS idx_operations_parent ON operations(parent_operation_id);
+        `
       }
     ];
 

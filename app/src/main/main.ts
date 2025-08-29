@@ -8,10 +8,18 @@ import { getAgentManager, type AgentManagerStatus } from '../agents/agent-manage
 import { TaskPriority, type CreateTaskParams, type FileAnalysisTask, type BatchProcessingTask, type HealthCheckTask } from '../agents/task-types';
 import { Worker } from 'worker_threads';
 import { logger } from '../lib/logger';
+import { BatchOperationManager } from '../lib/batch-operation-manager';
+import { FileOperationPreviewService } from '../lib/file-operation-preview';
+import { TransactionalFileManager } from '../lib/transactional-file-manager';
+import { OperationJournal } from '../lib/operation-journal';
 
 let mainWindow: BrowserWindow | null = null;
 let currentScanWorker: Worker | null = null;
 let agentManager: ReturnType<typeof getAgentManager> | null = null;
+let batchOperationManager: BatchOperationManager | null = null;
+let fileOperationPreview: FileOperationPreviewService | null = null;
+let transactionalFileManager: TransactionalFileManager | null = null;
+let operationJournal: OperationJournal | null = null;
 
 const createWindow = (): void => {
   // Create the browser window
@@ -478,6 +486,38 @@ app.whenReady().then(async () => {
     // Start Agent Manager
     await agentManager.start();
     
+    // Initialize Batch Operation Services
+    const database = getDatabase();
+    batchOperationManager = new BatchOperationManager(database, logger);
+    fileOperationPreview = new FileOperationPreviewService(database, logger);
+    transactionalFileManager = new TransactionalFileManager(database, logger);
+    operationJournal = new OperationJournal(database, logger);
+    
+    // Forward batch operation events to renderer
+    batchOperationManager.on('batch-started', (data) => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('batch:started', data);
+      }
+    });
+    
+    batchOperationManager.on('batch-progress', (data) => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('batch:progress', data);
+      }
+    });
+    
+    batchOperationManager.on('batch-completed', (data) => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('batch:completed', data);
+      }
+    });
+    
+    batchOperationManager.on('batch-failed', (data) => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('batch:failed', data);
+      }
+    });
+    
     // Forward agent events to renderer
     agentManager.on('manager-started', () => {
       if (mainWindow && !mainWindow.isDestroyed()) {
@@ -861,6 +901,270 @@ ipcMain.handle('analysis:getModelMetrics', async (_event, modelName?: string, an
     return { 
       success: false, 
       error: error instanceof Error ? error.message : String(error) 
+    };
+  }
+});
+
+// ========================
+// Batch Operations IPC Endpoints
+// ========================
+
+/**
+ * Generate preview for batch operations
+ */
+ipcMain.handle('batch:preview', async (_event, operations: Array<{
+  type: 'rename' | 'move';
+  sourcePath: string;
+  targetPath: string;
+  fileId: number;
+  suggestionId?: number;
+}>) => {
+  try {
+    if (!fileOperationPreview) {
+      throw new Error('File Operation Preview Service not initialized');
+    }
+
+    // Generate a temporary batch ID for preview
+    const batchId = `preview-${Date.now()}`;
+    
+    // Transform operations to expected format
+    const previewOps = operations.map((op, index) => ({
+      operationId: `${batchId}-${index}`,
+      type: op.type as 'rename' | 'move' | 'delete',
+      fileId: op.fileId,
+      targetPath: op.targetPath,
+      confidence: 0.8 // Default confidence
+    }));
+
+    const preview = await fileOperationPreview.generateBatchPreview(batchId, previewOps);
+    return { success: true, preview };
+
+  } catch (error) {
+    console.error('Failed to generate batch preview:', error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : String(error)
+    };
+  }
+});
+
+/**
+ * Execute batch operations
+ */
+ipcMain.handle('batch:execute', async (_event, operations: Array<{
+  type: 'rename' | 'move';
+  sourcePath: string;
+  targetPath: string;
+  fileId: number;
+  suggestionId?: number;
+}>, options?: {
+  priority?: 'high' | 'medium' | 'low';
+  continueOnError?: boolean;
+  createBackups?: boolean;
+}) => {
+  try {
+    if (!batchOperationManager) {
+      throw new Error('Batch Operation Manager not initialized');
+    }
+
+    // First add all operations to the queue
+    const operationIds: string[] = [];
+    for (const op of operations) {
+      const opId = batchOperationManager.addOperation({
+        type: op.type,
+        fileId: op.fileId,
+        originalPath: op.sourcePath,
+        targetPath: op.targetPath,
+        confidence: 0.8, // Default confidence
+        priority: options?.priority || 'medium'
+      });
+      operationIds.push(opId);
+    }
+
+    // Create a batch with these operations
+    const batchId = batchOperationManager.createBatch(operationIds, 'interactive');
+
+    // Start processing if not already running
+    await batchOperationManager.startProcessing();
+    
+    return { success: true, batchId };
+
+  } catch (error) {
+    console.error('Failed to execute batch operations:', error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : String(error)
+    };
+  }
+});
+
+/**
+ * Get progress of batch operation
+ */
+ipcMain.handle('batch:getProgress', async (_event, batchId: string) => {
+  try {
+    if (!batchOperationManager) {
+      throw new Error('Batch Operation Manager not initialized');
+    }
+
+    const batch = batchOperationManager.getBatchStatus(batchId);
+    if (!batch) {
+      return { success: false, error: 'Batch not found' };
+    }
+
+    const progress = {
+      batchId,
+      status: batch.status,
+      totalOperations: batch.operations.length,
+      completedOperations: batch.operations.filter(op => op.status === 'completed').length,
+      failedOperations: batch.operations.filter(op => op.status === 'failed').length,
+      startedAt: batch.createdAt,
+      operations: batch.operations
+    };
+
+    return { success: true, progress };
+
+  } catch (error) {
+    console.error('Failed to get batch progress:', error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : String(error)
+    };
+  }
+});
+
+/**
+ * Cancel batch operation
+ */
+ipcMain.handle('batch:cancel', async (_event, batchId: string, reason?: string) => {
+  try {
+    if (!batchOperationManager) {
+      throw new Error('Batch Operation Manager not initialized');
+    }
+
+    const success = await batchOperationManager.cancelBatch(batchId);
+    if (success && reason) {
+      console.log(`Batch ${batchId} cancelled: ${reason}`);
+    }
+    return { success };
+
+  } catch (error) {
+    console.error('Failed to cancel batch operation:', error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : String(error)
+    };
+  }
+});
+
+/**
+ * Undo operation from operation journal
+ */
+ipcMain.handle('operation:undo', async (_event, operationId: string) => {
+  try {
+    if (!operationJournal) {
+      throw new Error('Operation Journal not initialized');
+    }
+
+    if (!operationId) {
+      return { success: false, error: 'Operation ID is required' };
+    }
+
+    const result = await operationJournal.undoOperation(operationId);
+    return { success: true, result };
+
+  } catch (error) {
+    console.error('Failed to undo operation:', error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : String(error)
+    };
+  }
+});
+
+/**
+ * Get operation history from journal
+ */
+ipcMain.handle('operation:getHistory', async (_event, options?: {
+  limit?: number;
+  offset?: number;
+  transactionId?: string;
+  batchId?: string;
+}) => {
+  try {
+    if (!operationJournal) {
+      throw new Error('Operation Journal not initialized');
+    }
+
+    const history = await operationJournal.getOperationHistory(options);
+    return { success: true, history };
+
+  } catch (error) {
+    console.error('Failed to get operation history:', error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : String(error)
+    };
+  }
+});
+
+/**
+ * Get current queue status for batch operations
+ */
+ipcMain.handle('batch:getQueueStatus', async () => {
+  try {
+    if (!batchOperationManager) {
+      throw new Error('Batch Operation Manager not initialized');
+    }
+
+    const status = batchOperationManager.getQueueStats();
+    return { success: true, status };
+
+  } catch (error) {
+    console.error('Failed to get queue status:', error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : String(error)
+    };
+  }
+});
+
+/**
+ * Validate batch operations before execution
+ */
+ipcMain.handle('batch:validate', async (_event, operations: Array<{
+  type: 'rename' | 'move';
+  sourcePath: string;
+  targetPath: string;
+  fileId: number;
+  suggestionId?: number;
+}>) => {
+  try {
+    if (!batchOperationManager) {
+      throw new Error('Batch Operation Manager not initialized');
+    }
+
+    // Convert to BatchOperation format for validation
+    const batchOperations = operations.map((op, index) => ({
+      id: `validation-${Date.now()}-${index}`,
+      type: op.type as 'rename' | 'move' | 'delete',
+      fileId: op.fileId,
+      originalPath: op.sourcePath,
+      targetPath: op.targetPath,
+      confidence: 0.8,
+      priority: 'medium' as 'high' | 'medium' | 'low',
+      status: 'pending' as 'pending' | 'processing' | 'completed' | 'failed',
+      createdAt: Date.now()
+    }));
+
+    const validationResult = await batchOperationManager.validateBatch(batchOperations);
+    return { success: true, validationResult };
+
+  } catch (error) {
+    console.error('Failed to validate batch operations:', error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : String(error)
     };
   }
 });
