@@ -156,6 +156,37 @@ class DatabaseManager {
             ('ollama_endpoint', 'http://localhost:11434'),
             ('model_memory_estimates', '{}');
         `
+      },
+      {
+        version: 3,
+        description: 'Add agent task tracking tables',
+        sql: `
+          -- Agent tasks table for task lifecycle tracking
+          CREATE TABLE IF NOT EXISTS agent_tasks (
+            id TEXT PRIMARY KEY,
+            type TEXT NOT NULL,
+            state TEXT NOT NULL CHECK (state IN ('queued', 'running', 'completed', 'failed', 'cancelled', 'timeout')),
+            priority INTEGER NOT NULL,
+            model_name TEXT,
+            file_path TEXT,
+            timeout_ms INTEGER NOT NULL,
+            retry_count INTEGER DEFAULT 0,
+            max_retries INTEGER NOT NULL,
+            estimated_memory_mb INTEGER DEFAULT 0,
+            created_at INTEGER NOT NULL,
+            started_at INTEGER,
+            completed_at INTEGER,
+            execution_time_ms INTEGER,
+            error_message TEXT,
+            result_data TEXT, -- JSON string for task results
+            metadata TEXT -- JSON string for additional metadata
+          );
+
+          CREATE INDEX IF NOT EXISTS idx_agent_tasks_state ON agent_tasks(state);
+          CREATE INDEX IF NOT EXISTS idx_agent_tasks_priority ON agent_tasks(priority);
+          CREATE INDEX IF NOT EXISTS idx_agent_tasks_type ON agent_tasks(type);
+          CREATE INDEX IF NOT EXISTS idx_agent_tasks_created ON agent_tasks(created_at);
+        `
       }
     ];
 

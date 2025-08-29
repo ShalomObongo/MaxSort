@@ -302,6 +302,274 @@ export class OllamaClient extends EventEmitter {
   }
 
   /**
+   * Execute model inference for agent task with streaming support
+   */
+  async executeInference(
+    modelName: string, 
+    prompt: string, 
+    options: {
+      format?: 'json' | 'text';
+      timeout?: number;
+      stream?: boolean;
+      temperature?: number;
+      maxTokens?: number;
+    } = {}
+  ): Promise<{ response: string; executionTimeMs: number }> {
+    const startTime = Date.now();
+    const timeout = options.timeout || this.timeout;
+    
+    return this.withRetry(async () => {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), timeout);
+
+      try {
+        const requestBody: any = {
+          model: modelName,
+          prompt: prompt,
+          stream: options.stream || false,
+        };
+
+        if (options.format) {
+          requestBody.format = options.format;
+        }
+
+        if (options.temperature !== undefined) {
+          requestBody.options = { 
+            ...requestBody.options,
+            temperature: options.temperature 
+          };
+        }
+
+        if (options.maxTokens !== undefined) {
+          requestBody.options = {
+            ...requestBody.options,
+            num_predict: options.maxTokens
+          };
+        }
+
+        const response = await fetch(`${this.endpoint}/api/generate`, {
+          method: 'POST',
+          signal: controller.signal,
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(requestBody),
+        });
+
+        clearTimeout(timeoutId);
+
+        if (!response || !response.ok) {
+          throw new Error(`Ollama inference failed: HTTP ${response?.status || 'unknown'} - ${response?.statusText || 'unknown error'}`);
+        }
+
+        const result = await response.json();
+        const executionTimeMs = Date.now() - startTime;
+
+        // Emit inference metrics for monitoring
+        this.emit('inference-completed', {
+          modelName,
+          executionTimeMs,
+          promptLength: prompt.length,
+          responseLength: result.response?.length || 0,
+        });
+
+        return {
+          response: result.response || '',
+          executionTimeMs,
+        };
+
+      } catch (error) {
+        clearTimeout(timeoutId);
+        
+        // Emit inference failure for monitoring
+        this.emit('inference-failed', {
+          modelName,
+          error: error instanceof Error ? error.message : String(error),
+          executionTimeMs: Date.now() - startTime,
+        });
+        
+        throw error;
+      }
+    });
+  }
+
+  /**
+   * Execute streaming inference for long-running tasks
+   */
+  async executeStreamingInference(
+    modelName: string,
+    prompt: string,
+    onChunk: (chunk: string) => void,
+    options: {
+      timeout?: number;
+      temperature?: number;
+      maxTokens?: number;
+    } = {}
+  ): Promise<{ fullResponse: string; executionTimeMs: number }> {
+    const startTime = Date.now();
+    const timeout = options.timeout || this.timeout * 2; // Longer timeout for streaming
+    
+    return this.withRetry(async () => {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), timeout);
+
+      try {
+        const requestBody: any = {
+          model: modelName,
+          prompt: prompt,
+          stream: true,
+        };
+
+        if (options.temperature !== undefined) {
+          requestBody.options = { 
+            ...requestBody.options,
+            temperature: options.temperature 
+          };
+        }
+
+        if (options.maxTokens !== undefined) {
+          requestBody.options = {
+            ...requestBody.options,
+            num_predict: options.maxTokens
+          };
+        }
+
+        const response = await fetch(`${this.endpoint}/api/generate`, {
+          method: 'POST',
+          signal: controller.signal,
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(requestBody),
+        });
+
+        clearTimeout(timeoutId);
+
+        if (!response || !response.ok) {
+          throw new Error(`Ollama streaming inference failed: HTTP ${response?.status || 'unknown'}`);
+        }
+
+        const reader = response.body?.getReader();
+        if (!reader) {
+          throw new Error('Failed to get response reader');
+        }
+
+        let fullResponse = '';
+        const decoder = new TextDecoder();
+
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            const chunk = decoder.decode(value);
+            const lines = chunk.split('\n').filter(line => line.trim());
+            
+            for (const line of lines) {
+              try {
+                const data = JSON.parse(line);
+                if (data.response) {
+                  fullResponse += data.response;
+                  onChunk(data.response);
+                }
+                
+                if (data.done) {
+                  const executionTimeMs = Date.now() - startTime;
+                  
+                  this.emit('streaming-inference-completed', {
+                    modelName,
+                    executionTimeMs,
+                    promptLength: prompt.length,
+                    responseLength: fullResponse.length,
+                  });
+
+                  return { fullResponse, executionTimeMs };
+                }
+              } catch (parseError) {
+                // Skip malformed JSON lines
+                console.warn('Failed to parse streaming response line:', parseError);
+              }
+            }
+          }
+        } finally {
+          reader.releaseLock();
+        }
+
+        throw new Error('Streaming response ended unexpectedly');
+
+      } catch (error) {
+        clearTimeout(timeoutId);
+        
+        this.emit('streaming-inference-failed', {
+          modelName,
+          error: error instanceof Error ? error.message : String(error),
+          executionTimeMs: Date.now() - startTime,
+        });
+        
+        throw error;
+      }
+    });
+  }
+
+  /**
+   * Check if model is loaded and ready for inference
+   */
+  async isModelReady(modelName: string): Promise<boolean> {
+    try {
+      const response = await fetch(`${this.endpoint}/api/show`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ name: modelName }),
+      });
+
+      return response ? response.ok : false;
+    } catch (error) {
+      console.warn(`Failed to check model readiness for ${modelName}:`, error);
+      return false;
+    }
+  }
+
+  /**
+   * Preload model into memory for faster inference
+   */
+  async preloadModel(modelName: string): Promise<boolean> {
+    try {
+      // Send empty prompt to load model
+      await this.executeInference(modelName, '', { 
+        timeout: 30000, // 30 second timeout for model loading
+        maxTokens: 1
+      });
+      
+      console.log(`Model ${modelName} preloaded successfully`);
+      return true;
+    } catch (error) {
+      console.error(`Failed to preload model ${modelName}:`, error);
+      return false;
+    }
+  }
+
+  /**
+   * Get model performance metrics for optimization
+   */
+  getInferenceMetrics(): {
+    totalInferences: number;
+    averageExecutionTime: number;
+    successRate: number;
+    modelUsage: Record<string, number>;
+  } {
+    // This would integrate with metrics collection system
+    // For now, return placeholder data
+    return {
+      totalInferences: 0,
+      averageExecutionTime: 0,
+      successRate: 1.0,
+      modelUsage: {},
+    };
+  }
+
+  /**
    * Clean up resources
    */
   destroy(): void {

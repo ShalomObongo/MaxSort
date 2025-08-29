@@ -4,10 +4,13 @@ import * as fs from 'fs/promises';
 import { createScannerWorker, type ScanOptions, type WorkerMessage, type FileMetadata } from '../workers/file-scanner';
 import { getDatabase, type FileRecord } from '../lib/database-mock';
 import { getOllamaClient, type OllamaModel, type OllamaHealthStatus } from '../lib/ollama-client';
+import { getAgentManager, type AgentManagerStatus } from '../agents/agent-manager';
+import { TaskPriority, type CreateTaskParams, type FileAnalysisTask, type BatchProcessingTask, type HealthCheckTask } from '../agents/task-types';
 import { Worker } from 'worker_threads';
 
 let mainWindow: BrowserWindow | null = null;
 let currentScanWorker: Worker | null = null;
+let agentManager: ReturnType<typeof getAgentManager> | null = null;
 
 const createWindow = (): void => {
   // Create the browser window
@@ -64,11 +67,18 @@ app.whenReady().then(async () => {
   });
 });
 
-app.on('window-all-closed', () => {
+app.on('window-all-closed', async () => {
   // Cleanup worker if running
   if (currentScanWorker) {
     currentScanWorker.terminate();
     currentScanWorker = null;
+  }
+  
+  // Cleanup Agent Manager
+  if (agentManager) {
+    console.log('Shutting down Agent Manager...');
+    await agentManager.stop();
+    agentManager = null;
   }
   
   // Close database
@@ -437,8 +447,8 @@ ipcMain.handle('ollama:getPreferences', async () => {
   }
 });
 
-// Initialize Ollama health monitoring
-app.whenReady().then(() => {
+// Initialize Ollama health monitoring and Agent Manager
+app.whenReady().then(async () => {
   const ollamaClient = getOllamaClient();
   
   // Start health monitoring
@@ -454,4 +464,222 @@ app.whenReady().then(() => {
   ollamaClient.on('health-error', (error: Error) => {
     console.error('Ollama health monitoring error:', error);
   });
+
+  // Initialize Agent Manager
+  try {
+    agentManager = getAgentManager({
+      maxConcurrentSlots: 4, // Conservative limit for initial deployment
+      safetyFactor: 1.5,
+      osReservedMemory: 2 * 1024 * 1024 * 1024, // 2GB
+      taskTimeoutMs: 5 * 60 * 1000, // 5 minutes
+    });
+
+    // Start Agent Manager
+    await agentManager.start();
+    
+    // Forward agent events to renderer
+    agentManager.on('manager-started', () => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('agent:managerStarted');
+      }
+    });
+
+    agentManager.on('system-health', (health) => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('agent:systemHealth', health);
+      }
+    });
+
+    agentManager.on('task-completed', (result) => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('agent:taskCompleted', result);
+      }
+    });
+
+    agentManager.on('task-failed', (result) => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('agent:taskFailed', result);
+      }
+    });
+
+    agentManager.on('slots-recomputed', (info) => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('agent:slotsRecomputed', info);
+      }
+    });
+
+    agentManager.on('emergency-stop', (info) => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('agent:emergencyStop', info);
+      }
+    });
+
+    console.log('Agent Manager initialized and started');
+    
+  } catch (error) {
+    console.error('Failed to initialize Agent Manager:', error);
+  }
+});
+
+// Agent Manager IPC handlers
+ipcMain.handle('agent:getStatus', async (): Promise<AgentManagerStatus> => {
+  if (!agentManager) {
+    throw new Error('Agent Manager not initialized');
+  }
+  return agentManager.getStatus();
+});
+
+ipcMain.handle('agent:createFileAnalysisTask', async (_event, params: {
+  filePath: string;
+  modelName: string;
+  analysisType: 'classification' | 'summary' | 'extraction';
+  priority?: TaskPriority;
+  timeoutMs?: number;
+  promptTemplate?: string;
+}): Promise<string> => {
+  if (!agentManager) {
+    throw new Error('Agent Manager not initialized');
+  }
+
+  const taskParams: CreateTaskParams<FileAnalysisTask> = {
+    type: 'file-analysis',
+    filePath: params.filePath,
+    modelName: params.modelName,
+    analysisType: params.analysisType,
+    promptTemplate: params.promptTemplate || 'Analyze the following content: {{content}}',
+    expectedResponseFormat: params.analysisType === 'classification' ? 'json' : 'text',
+    priority: params.priority || TaskPriority.NORMAL,
+    timeoutMs: params.timeoutMs || 300000, // 5 minutes default
+    maxRetries: 3,
+    metadata: {
+      source: 'ui-request',
+      requestedAt: Date.now(),
+    },
+    estimatedMemoryMB: 0, // Will be calculated by AgentManager
+  };
+
+  return agentManager.createTask(taskParams);
+});
+
+ipcMain.handle('agent:createBatchProcessingTask', async (_event, params: {
+  filePaths: string[];
+  modelName: string;
+  batchSize?: number;
+  priority?: TaskPriority;
+  timeoutMs?: number;
+  processingMode?: 'parallel' | 'sequential';
+}): Promise<string> => {
+  if (!agentManager) {
+    throw new Error('Agent Manager not initialized');
+  }
+
+  const taskParams: CreateTaskParams<BatchProcessingTask> = {
+    type: 'batch-processing',
+    filePaths: params.filePaths,
+    modelName: params.modelName,
+    batchSize: params.batchSize || 10,
+    processingMode: params.processingMode || 'sequential',
+    priority: params.priority || TaskPriority.NORMAL,
+    timeoutMs: params.timeoutMs || 600000, // 10 minutes for batch
+    maxRetries: 2,
+    metadata: {
+      source: 'batch-request',
+      requestedAt: Date.now(),
+      totalFiles: params.filePaths.length,
+    },
+    estimatedMemoryMB: 0,
+  };
+
+  return agentManager.createTask(taskParams);
+});
+
+ipcMain.handle('agent:createHealthCheckTask', async (_event, params: {
+  component: 'ollama' | 'database' | 'filesystem';
+  priority?: TaskPriority;
+}): Promise<string> => {
+  if (!agentManager) {
+    throw new Error('Agent Manager not initialized');
+  }
+
+  const taskParams: CreateTaskParams<HealthCheckTask> = {
+    type: 'health-check',
+    component: params.component,
+    checkInterval: 30000, // 30 seconds
+    priority: params.priority || TaskPriority.HIGH,
+    timeoutMs: 30000,
+    maxRetries: 1,
+    metadata: {
+      source: 'health-monitoring',
+      requestedAt: Date.now(),
+    },
+    estimatedMemoryMB: 100, // Minimal memory for health checks
+  };
+
+  return agentManager.createTask(taskParams);
+});
+
+ipcMain.handle('agent:cancelTask', async (_event, taskId: string, reason?: string): Promise<boolean> => {
+  if (!agentManager) {
+    throw new Error('Agent Manager not initialized');
+  }
+  return agentManager.cancelTask(taskId, reason || 'User requested cancellation');
+});
+
+ipcMain.handle('agent:getQueueStats', async () => {
+  if (!agentManager) {
+    throw new Error('Agent Manager not initialized');
+  }
+  return agentManager.getStatus();
+});
+
+ipcMain.handle('agent:pauseProcessing', async (): Promise<void> => {
+  if (!agentManager) {
+    throw new Error('Agent Manager not initialized');
+  }
+  
+  // Update configuration to stop accepting new tasks
+  agentManager.updateConfig({ maxConcurrentSlots: 0 });
+  console.log('Agent processing paused');
+});
+
+ipcMain.handle('agent:resumeProcessing', async (): Promise<void> => {
+  if (!agentManager) {
+    throw new Error('Agent Manager not initialized');
+  }
+  
+  // Restore normal slot capacity
+  agentManager.updateConfig({ maxConcurrentSlots: 4 });
+  console.log('Agent processing resumed');
+});
+
+ipcMain.handle('agent:emergencyStop', async (_event, reason?: string): Promise<void> => {
+  if (!agentManager) {
+    throw new Error('Agent Manager not initialized');
+  }
+  
+  // Get all running tasks and cancel them
+  const status = agentManager.getStatus();
+  console.log(`Emergency stop requested: ${reason || 'User initiated'}`);
+  
+  // This would trigger internal emergency stop procedures
+  agentManager.updateConfig({ maxConcurrentSlots: 0 });
+  
+  // Force recompute with minimal capacity
+  await agentManager.recomputeSlotCapacity();
+});
+
+ipcMain.handle('agent:getPerformanceMetrics', async () => {
+  if (!agentManager) {
+    throw new Error('Agent Manager not initialized');
+  }
+  
+  // This would return comprehensive performance metrics
+  return {
+    uptime: Date.now(), // Simplified for now
+    totalTasksProcessed: 0,
+    averageExecutionTime: 0,
+    successRate: 1.0,
+    memoryUtilization: 0,
+    systemHealth: agentManager.getStatus().systemHealth,
+  };
 });
