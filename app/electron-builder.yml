@@ -1,0 +1,42 @@
+appId: com.maxsort.app
+productName: MaxSort
+copyright: Copyright © 2025 MaxSort Team
+
+directories:
+  output: dist/packages
+  buildResources: resources
+
+files:
+  - dist/**/*
+  - package.json
+  - "!**/{.DS_Store,.git,.svn,CVS,RCS,SCCS,.nyc_output,__tests__,__test__,test,tests,spec,specs}"
+
+mac:
+  category: public.app-category.productivity
+  target:
+    - target: dmg
+      arch: [x64, arm64]
+  icon: resources/icon.icns
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  entitlements: resources/entitlements.mac.plist
+  entitlementsInherit: resources/entitlements.mac.plist
+
+dmg:
+  title: MaxSort ${version}
+  artifactName: MaxSort-${version}-${arch}.${ext}
+  background: resources/dmg-background.png
+  contents:
+    - x: 110
+      y: 150
+    - x: 240
+      y: 150
+      type: link
+      path: /Applications
+
+afterSign: scripts/notarize.js
+
+publish:
+  provider: github
+  owner: MaxSort
+  repo: MaxSort
