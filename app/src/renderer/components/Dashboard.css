@@ -546,3 +546,77 @@
     flex-direction: column;
   }
 }
+
+/* Execution Progress Styles */
+.execution-ready {
+  max-width: 600px;
+  margin: 0 auto;
+}
+
+.execution-summary {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 20px;
+  margin: 16px 0;
+}
+
+.operation-stats p {
+  margin: 8px 0;
+  color: #475569;
+}
+
+.execution-progress {
+  background: #fef3c7;
+  border: 1px solid #f59e0b;
+  border-radius: 8px;
+  padding: 20px;
+  margin: 16px 0;
+}
+
+.execution-progress h4 {
+  margin: 0 0 16px 0;
+  color: #92400e;
+  font-size: 18px;
+}
+
+.execution-error {
+  background: #fef2f2;
+  border: 1px solid #fca5a5;
+  border-radius: 8px;
+  padding: 20px;
+  margin: 16px 0;
+}
+
+.execution-error h4 {
+  margin: 0 0 12px 0;
+  color: #dc2626;
+  font-size: 18px;
+}
+
+.execution-complete {
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  border-radius: 8px;
+  padding: 20px;
+  margin: 16px 0;
+}
+
+.execution-complete h4 {
+  margin: 0 0 16px 0;
+  color: #15803d;
+  font-size: 18px;
+}
+
+.completion-stats {
+  background: #ffffff;
+  border-radius: 6px;
+  padding: 16px;
+  margin-top: 16px;
+}
+
+.completion-stats p {
+  margin: 6px 0;
+  font-size: 14px;
+  color: #374151;
+}

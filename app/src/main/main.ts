@@ -12,6 +12,7 @@ import { BatchOperationManager } from '../lib/batch-operation-manager';
 import { FileOperationPreviewService } from '../lib/file-operation-preview';
 import { TransactionalFileManager } from '../lib/transactional-file-manager';
 import { OperationJournal } from '../lib/operation-journal';
+import { SuggestionExecutionService } from '../lib/suggestion-execution-service';
 import { initializeAllIPCHandlers } from './ipc-handlers';
 
 let mainWindow: BrowserWindow | null = null;
@@ -21,6 +22,7 @@ let batchOperationManager: BatchOperationManager | null = null;
 let fileOperationPreview: FileOperationPreviewService | null = null;
 let transactionalFileManager: TransactionalFileManager | null = null;
 let operationJournal: OperationJournal | null = null;
+let suggestionExecutionService: SuggestionExecutionService | null = null;
 
 const createWindow = (): void => {
   // Create the browser window
@@ -496,6 +498,11 @@ app.whenReady().then(async () => {
     fileOperationPreview = new FileOperationPreviewService(database, logger);
     transactionalFileManager = new TransactionalFileManager(database, logger);
     operationJournal = new OperationJournal(database, logger);
+    suggestionExecutionService = new SuggestionExecutionService(
+      database,
+      batchOperationManager,
+      transactionalFileManager
+    );
     
     // Forward batch operation events to renderer
     batchOperationManager.on('batch-started', (data) => {
@@ -519,6 +526,31 @@ app.whenReady().then(async () => {
     batchOperationManager.on('batch-failed', (data) => {
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send('batch:failed', data);
+      }
+    });
+    
+    // Forward suggestion execution events to renderer
+    suggestionExecutionService.on('execution:started', (batchId, operations) => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('suggestion:executionStarted', { batchId, operations });
+      }
+    });
+    
+    suggestionExecutionService.on('execution:progress', (batchId, progress) => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('suggestion:executionProgress', { batchId, progress });
+      }
+    });
+    
+    suggestionExecutionService.on('execution:completed', (batchId, results) => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('suggestion:executionCompleted', { batchId, results });
+      }
+    });
+    
+    suggestionExecutionService.on('execution:failed', (batchId, error) => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('suggestion:executionFailed', { batchId, error });
       }
     });
     
@@ -1054,6 +1086,201 @@ ipcMain.handle('batch:cancel', async (_event, batchId: string, reason?: string) 
 
   } catch (error) {
     console.error('Failed to cancel batch operation:', error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : String(error)
+    };
+  }
+});
+
+/**
+ * Execute approved suggestions with transactional support
+ */
+ipcMain.handle('suggestions:execute', async (_event, options: {
+  fileIds?: number[];
+  suggestionIds?: number[];
+  selectionCriteria?: {
+    confidenceThreshold?: number;
+    types?: string[];
+    grouping?: 'none' | 'confidence' | 'type' | 'directory';
+  };
+  executionOptions?: {
+    priority?: 'high' | 'medium' | 'low';
+    continueOnError?: boolean;
+    createBackups?: boolean;
+    validateBefore?: boolean;
+  };
+}) => {
+  try {
+    if (!suggestionExecutionService) {
+      throw new Error('Suggestion Execution Service not initialized');
+    }
+
+    const { fileIds, suggestionIds, selectionCriteria = {}, executionOptions = {} } = options;
+
+    // Get approved suggestions based on provided criteria
+    let suggestions: any[] = [];
+    
+    if (suggestionIds && suggestionIds.length > 0) {
+      // Get specific suggestions by IDs
+      const approvalOptions = {
+        minConfidence: selectionCriteria.confidenceThreshold || 0.7,
+        operationTypes: selectionCriteria.types as ('rename' | 'move')[] || undefined,
+        selectedSuggestionIds: suggestionIds,
+        status: ['approved'] as any
+      };
+      suggestions = await suggestionExecutionService.getApprovedSuggestions(approvalOptions);
+    } else if (fileIds && fileIds.length > 0) {
+      // Get approved suggestions for specific files - we'll get all and filter
+      const approvalOptions = {
+        minConfidence: selectionCriteria.confidenceThreshold || 0.7,
+        operationTypes: selectionCriteria.types as ('rename' | 'move')[] || undefined,
+        status: ['approved'] as any
+      };
+      const allSuggestions = await suggestionExecutionService.getApprovedSuggestions(approvalOptions);
+      // Filter by fileIds
+      suggestions = allSuggestions.filter(s => fileIds.includes(s.fileId));
+    } else {
+      // Get all approved suggestions
+      const approvalOptions = {
+        minConfidence: selectionCriteria.confidenceThreshold || 0.7,
+        operationTypes: selectionCriteria.types as ('rename' | 'move')[] || undefined,
+        status: ['approved'] as any
+      };
+      suggestions = await suggestionExecutionService.getApprovedSuggestions(approvalOptions);
+    }
+    
+    if (suggestions.length === 0) {
+      return { 
+        success: false, 
+        error: 'No approved suggestions found matching the specified criteria',
+        details: { fileIds, suggestionIds, criteria: selectionCriteria }
+      };
+    }
+
+    // Execute suggestions using transactional execution
+    const executionResult = await suggestionExecutionService.executeWithTransaction(
+      suggestions,
+      {
+        createBackups: executionOptions.createBackups !== false,
+        enableRollback: true,
+        operationJournaling: true
+      }
+    );
+    
+    return { 
+      success: executionResult.success,
+      transactionId: executionResult.transactionId,
+      completedOperations: executionResult.completedOperations,
+      errors: executionResult.errors,
+      rollbackAvailable: executionResult.rollbackAvailable,
+      message: 'Suggestion execution completed'
+    };
+
+  } catch (error) {
+    console.error('Failed to execute suggestions:', error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : String(error)
+    };
+  }
+});
+
+/**
+ * Get execution status for suggestion batches
+ */
+ipcMain.handle('suggestions:getExecutionStatus', async (_event, batchId?: string) => {
+  try {
+    if (!suggestionExecutionService) {
+      throw new Error('Suggestion Execution Service not initialized');
+    }
+
+    // Get all active batches since individual batch lookup is not available
+    const activeBatches = suggestionExecutionService.getActiveBatches();
+    
+    if (batchId) {
+      // Find specific batch
+      const batch = activeBatches.find(b => b.id === batchId);
+      if (!batch) {
+        return { success: false, error: 'Batch not found' };
+      }
+      
+      return { 
+        success: true, 
+        batch: {
+          id: batch.id,
+          operations: batch.operations,
+          riskLevel: batch.riskLevel,
+          estimatedDuration: batch.estimatedDuration
+        }
+      };
+    } else {
+      // Return all active batches
+      return { 
+        success: true, 
+        activeBatches: activeBatches.map(batch => ({
+          id: batch.id,
+          operationCount: batch.operations.length,
+          riskLevel: batch.riskLevel,
+          estimatedDuration: batch.estimatedDuration
+        }))
+      };
+    }
+
+  } catch (error) {
+    console.error('Failed to get execution status:', error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : String(error)
+    };
+  }
+});
+
+/**
+ * Cancel suggestion execution batch
+ */
+ipcMain.handle('suggestions:cancelExecution', async (_event, batchId: string, reason?: string) => {
+  try {
+    if (!suggestionExecutionService) {
+      throw new Error('Suggestion Execution Service not initialized');
+    }
+
+    await suggestionExecutionService.cancelBatch(batchId);
+    
+    if (reason) {
+      console.log(`Suggestion batch ${batchId} cancelled: ${reason}`);
+    }
+    
+    return { success: true };
+
+  } catch (error) {
+    console.error('Failed to cancel suggestion execution:', error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : String(error)
+    };
+  }
+});
+
+/**
+ * Undo transactional operation
+ */
+ipcMain.handle('suggestions:undoTransaction', async (_event, transactionId: string, reason?: string) => {
+  try {
+    if (!suggestionExecutionService) {
+      throw new Error('Suggestion Execution Service not initialized');
+    }
+
+    const undoResult = await suggestionExecutionService.executeUndo(transactionId, reason);
+    
+    return { 
+      success: undoResult.success,
+      completedOperations: undoResult.completedOperations,
+      errors: undoResult.errors
+    };
+
+  } catch (error) {
+    console.error('Failed to undo transaction:', error);
     return {
       success: false,
       error: error instanceof Error ? error.message : String(error)

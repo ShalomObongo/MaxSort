@@ -900,6 +900,172 @@ class DatabaseManager {
   }
 
   /**
+   * Get file record by ID
+   */
+  public getFileById(id: number): FileRecord | undefined {
+    const stmt = this.db.prepare('SELECT * FROM files WHERE id = ?');
+    return stmt.get(id) as FileRecord | undefined;
+  }
+
+  /**
+   * Update suggestion record
+   */
+  public updateSuggestion(id: number, updates: Partial<SuggestionRecord>): boolean {
+    const setClause: string[] = [];
+    const values: any[] = [];
+    
+    // Build SET clause dynamically based on provided updates
+    Object.entries(updates).forEach(([key, value]) => {
+      if (value !== undefined) {
+        // Convert camelCase to snake_case for database column names
+        const dbKey = key === 'fileId' ? 'file_id' :
+                     key === 'requestId' ? 'request_id' :
+                     key === 'analysisType' ? 'analysis_type' :
+                     key === 'suggestedValue' ? 'suggested_value' :
+                     key === 'originalConfidence' ? 'original_confidence' :
+                     key === 'adjustedConfidence' ? 'adjusted_confidence' :
+                     key === 'qualityScore' ? 'quality_score' :
+                     key === 'modelUsed' ? 'model_used' :
+                     key === 'analysisDuration' ? 'analysis_duration' :
+                     key === 'modelVersion' ? 'model_version' :
+                     key === 'contentHash' ? 'content_hash' :
+                     key === 'validationFlags' ? 'validation_flags' :
+                     key === 'rankPosition' ? 'rank_position' :
+                     key === 'isRecommended' ? 'is_recommended' :
+                     key === 'createdAt' ? 'created_at' :
+                     key === 'updatedAt' ? 'updated_at' :
+                     key;
+        
+        setClause.push(`${dbKey} = ?`);
+        values.push(value);
+      }
+    });
+
+    if (setClause.length === 0) {
+      return false; // No updates provided
+    }
+
+    // Always update the updated_at timestamp
+    setClause.push('updated_at = unixepoch()');
+    values.push(id);
+
+    const sql = `UPDATE suggestions SET ${setClause.join(', ')} WHERE id = ?`;
+    const stmt = this.db.prepare(sql);
+    const result = stmt.run(...values);
+    
+    return result.changes > 0;
+  }
+
+  /**
+   * Record an operation in the operations table
+   */
+  public recordOperation(operation: {
+    id: string;
+    transactionId: string;
+    batchId?: string;
+    parentOperationId?: string;
+    operationType: 'rename' | 'move' | 'delete' | 'copy';
+    fileId?: number;
+    sourcePath: string;
+    targetPath?: string;
+    status?: string;
+    undoData?: string;
+    backupPath?: string;
+    fileSize?: number;
+    fileHash?: string;
+    originalMtime?: number;
+    userId?: string;
+  }): boolean {
+    const stmt = this.db.prepare(`
+      INSERT INTO operations (
+        id, transaction_id, batch_id, parent_operation_id,
+        operation_type, file_id, source_path, target_path,
+        status, undo_data, backup_path, file_size, file_hash,
+        original_mtime, user_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    const result = stmt.run(
+      operation.id,
+      operation.transactionId,
+      operation.batchId || null,
+      operation.parentOperationId || null,
+      operation.operationType,
+      operation.fileId || null,
+      operation.sourcePath,
+      operation.targetPath || null,
+      operation.status || 'pending',
+      operation.undoData || null,
+      operation.backupPath || null,
+      operation.fileSize || null,
+      operation.fileHash || null,
+      operation.originalMtime || null,
+      operation.userId || null
+    );
+
+    return result.changes > 0;
+  }
+
+  /**
+   * Get operations by transaction ID or batch ID
+   */
+  public getOperations(criteria: { 
+    transactionId?: string; 
+    batchId?: string; 
+    status?: string;
+    limit?: number;
+  }): any[] {
+    let sql = 'SELECT * FROM operations WHERE 1=1';
+    const params: any[] = [];
+
+    if (criteria.transactionId) {
+      sql += ' AND transaction_id = ?';
+      params.push(criteria.transactionId);
+    }
+
+    if (criteria.batchId) {
+      sql += ' AND batch_id = ?';
+      params.push(criteria.batchId);
+    }
+
+    if (criteria.status) {
+      sql += ' AND status = ?';
+      params.push(criteria.status);
+    }
+
+    sql += ' ORDER BY created_at DESC';
+
+    if (criteria.limit) {
+      sql += ' LIMIT ?';
+      params.push(criteria.limit);
+    }
+
+    const stmt = this.db.prepare(sql);
+    return stmt.all(...params);
+  }
+
+  /**
+   * Update operation status
+   */
+  public updateOperationStatus(operationId: string, status: string, errorMessage?: string): boolean {
+    const stmt = this.db.prepare(`
+      UPDATE operations 
+      SET status = ?, error_message = ?, 
+          ${status === 'completed' ? 'completed_at = unixepoch(),' : ''}
+          ${status === 'in_progress' ? 'started_at = unixepoch(),' : ''}
+          duration_ms = CASE 
+            WHEN started_at IS NOT NULL AND ? = 'completed' THEN 
+              (unixepoch() - started_at) * 1000 
+            ELSE duration_ms 
+          END
+      WHERE id = ?
+    `);
+
+    const result = stmt.run(status, errorMessage || null, status, operationId);
+    return result.changes > 0;
+  }
+
+  /**
    * Cleanup and close database
    */
   public close(): void {

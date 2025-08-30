@@ -1,6 +1,17 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useAppState } from '../store/AppStateContext';
 import ThemeCustomizer from './ThemeCustomizer';
+import { ManualReviewQueueUI } from './ManualReviewQueueUI';
+import { ManualReviewQueue, ManualReviewQueueConfig } from '../../lib/manual-review-queue';
+import { 
+  ConfidenceThresholdConfig, 
+  CONFIDENCE_PROFILES, 
+  CONFIDENCE_CONFIG_CONSTANTS,
+  ConfidenceThresholdValidator,
+  createDefaultConfidenceThresholdConfig,
+  generateSampleFilteringPreview,
+  SuggestionCategory
+} from '../../lib/confidence-threshold-config';
 import './Settings.css';
 
 interface UserProfile {
@@ -45,6 +56,7 @@ interface UserPreferences {
     requireConfirmation: boolean;
     enableBatchMode: boolean;
     defaultBatchSize: number;
+    confidenceThresholdConfig: ConfidenceThresholdConfig;
   };
   
   // Notification Settings
@@ -108,12 +120,34 @@ export const Settings: React.FC = () => {
   }>>([]);
   const [unsavedChanges, setUnsavedChanges] = useState(false);
   const [validationErrors, setValidationErrors] = useState<Record<string, string>>({});
+  
+  // Confidence threshold configuration state
+  const [confidencePreview, setConfidencePreview] = useState<{
+    sampleSuggestions: Array<{
+      filename: string;
+      confidence: number;
+      category: SuggestionCategory;
+    }>;
+    statistics: any;
+  } | null>(null);
+
+  // Manual review queue state
+  const [manualReviewQueue, setManualReviewQueue] = useState<ManualReviewQueue | null>(null);
+  const [reviewQueueConfig, setReviewQueueConfig] = useState<ManualReviewQueueConfig>(
+    ManualReviewQueue.getDefaultConfig()
+  );
 
   // Load user profile and preferences on mount
   useEffect(() => {
     loadUserSettings();
     loadAvailableModels();
   }, []);
+
+  // Initialize manual review queue
+  useEffect(() => {
+    const queue = new ManualReviewQueue(reviewQueueConfig);
+    setManualReviewQueue(queue);
+  }, [reviewQueueConfig]);
 
   const loadUserSettings = async () => {
     try {
@@ -161,8 +195,54 @@ export const Settings: React.FC = () => {
 
       // Validate the change
       validateSetting(section, key, value);
+      
+      // Update confidence preview if threshold config changed
+      if (section === 'workflow' && key === 'confidenceThresholdConfig') {
+        updateConfidencePreview(value);
+      }
     }
   }, [preferences]);
+
+  const updateConfidencePreview = useCallback((config: ConfidenceThresholdConfig) => {
+    const effectiveThreshold = ConfidenceThresholdValidator.getEffectiveThreshold(config);
+    const preview = generateSampleFilteringPreview(effectiveThreshold);
+    setConfidencePreview(preview);
+  }, []);
+
+  const handleConfidenceProfileChange = useCallback((profileKey: string) => {
+    if (!preferences) return;
+    
+    const profile = CONFIDENCE_PROFILES[profileKey];
+    const newConfig: ConfidenceThresholdConfig = {
+      ...preferences.workflow.confidenceThresholdConfig,
+      profile,
+      customThreshold: profile.isCustom ? preferences.workflow.confidenceThresholdConfig?.customThreshold || 0.80 : undefined,
+    };
+    
+    handlePreferenceChange('workflow', 'confidenceThresholdConfig', newConfig);
+  }, [preferences, handlePreferenceChange]);
+
+  const handleCustomThresholdChange = useCallback((threshold: number) => {
+    if (!preferences) return;
+    
+    const newConfig: ConfidenceThresholdConfig = {
+      ...preferences.workflow.confidenceThresholdConfig,
+      customThreshold: threshold,
+    };
+    
+    handlePreferenceChange('workflow', 'confidenceThresholdConfig', newConfig);
+  }, [preferences, handlePreferenceChange]);
+
+  // Initialize confidence preview when preferences load
+  useEffect(() => {
+    if (preferences?.workflow.confidenceThresholdConfig) {
+      updateConfidencePreview(preferences.workflow.confidenceThresholdConfig);
+    } else if (preferences) {
+      // Initialize with default config if not present
+      const defaultConfig = createDefaultConfidenceThresholdConfig();
+      updateConfidencePreview(defaultConfig);
+    }
+  }, [preferences, updateConfidencePreview]);
 
   const validateSetting = (section: keyof UserPreferences, key: string, value: any) => {
     const errors = { ...validationErrors };
@@ -187,6 +267,12 @@ export const Settings: React.FC = () => {
       }
       if (key === 'defaultBatchSize' && (value < 1 || value > 1000)) {
         errors[errorKey] = 'Batch size must be between 1 and 1000';
+      }
+      if (key === 'confidenceThresholdConfig' && value) {
+        const validation = ConfidenceThresholdValidator.validateConfig(value);
+        if (!validation.isValid) {
+          errors[errorKey] = validation.errors.join(', ');
+        }
       }
     }
 
@@ -556,86 +642,367 @@ export const Settings: React.FC = () => {
     </div>
   );
 
-  const renderWorkflowTab = () => (
-    <div className="settings-tab-content">
-      <div className="settings-section">
-        <h3>Automation Settings</h3>
-        <div className="form-group">
-          <label className="checkbox-label">
-            <input
-              type="checkbox"
-              checked={preferences?.workflow.autoApproveHighConfidence || false}
-              onChange={(e) => handlePreferenceChange('workflow', 'autoApproveHighConfidence', e.target.checked)}
-            />
-            Auto-approve High Confidence Suggestions
-          </label>
-          <small className="form-help">Automatically approve suggestions above the confidence threshold</small>
-        </div>
-
-        <div className="form-group">
-          <label htmlFor="confidenceThreshold">Confidence Threshold</label>
-          <div className="slider-group">
-            <input
-              type="range"
-              id="confidenceThreshold"
-              min="0.1"
-              max="1.0"
-              step="0.05"
-              value={preferences?.workflow.confidenceThreshold || 0.8}
-              onChange={(e) => handlePreferenceChange('workflow', 'confidenceThreshold', parseFloat(e.target.value))}
-              className="form-slider"
-            />
-            <span className="slider-value">{((preferences?.workflow.confidenceThreshold || 0.8) * 100).toFixed(0)}%</span>
+  const renderWorkflowTab = () => {
+    const confidenceConfig = preferences?.workflow.confidenceThresholdConfig || createDefaultConfidenceThresholdConfig();
+    const effectiveThreshold = ConfidenceThresholdValidator.getEffectiveThreshold(confidenceConfig);
+    
+    return (
+      <div className="settings-tab-content">
+        <div className="settings-section">
+          <h3>Confidence-Based Filtering</h3>
+          <p className="section-description">
+            Control how AI suggestions are automatically filtered and approved based on confidence scores.
+          </p>
+          
+          <div className="form-group">
+            <label htmlFor="confidenceProfile">Confidence Profile</label>
+            <select
+              id="confidenceProfile"
+              value={Object.keys(CONFIDENCE_PROFILES).find(key => 
+                CONFIDENCE_PROFILES[key].name === confidenceConfig.profile.name
+              ) || 'balanced'}
+              onChange={(e) => handleConfidenceProfileChange(e.target.value)}
+              className="form-control"
+            >
+              {Object.entries(CONFIDENCE_PROFILES).map(([key, profile]) => (
+                <option key={key} value={key}>
+                  {profile.name} ({Math.round(profile.threshold * 100)}%)
+                </option>
+              ))}
+            </select>
+            <small className="form-help">{confidenceConfig.profile.description}</small>
           </div>
-          <small className="form-help">Minimum confidence required for auto-approval</small>
-          {validationErrors['workflow.confidenceThreshold'] && (
-            <div className="error-message">{validationErrors['workflow.confidenceThreshold']}</div>
+
+          {confidenceConfig.profile.isCustom && (
+            <div className="form-group">
+              <label htmlFor="customConfidenceThreshold">Custom Threshold</label>
+              <div className="slider-group">
+                <input
+                  type="range"
+                  id="customConfidenceThreshold"
+                  min={CONFIDENCE_CONFIG_CONSTANTS.MIN_THRESHOLD}
+                  max={CONFIDENCE_CONFIG_CONSTANTS.MAX_THRESHOLD}
+                  step={CONFIDENCE_CONFIG_CONSTANTS.THRESHOLD_STEP}
+                  value={confidenceConfig.customThreshold || 0.80}
+                  onChange={(e) => handleCustomThresholdChange(parseFloat(e.target.value))}
+                  className="form-slider"
+                />
+                <span className="slider-value">
+                  {Math.round((confidenceConfig.customThreshold || 0.80) * 100)}%
+                </span>
+              </div>
+              <small className="form-help">
+                Suggestions with confidence at or above this threshold will be auto-approved
+              </small>
+            </div>
+          )}
+
+          <div className="form-group">
+            <label className="checkbox-label">
+              <input
+                type="checkbox"
+                checked={confidenceConfig.autoApprove}
+                onChange={(e) => handlePreferenceChange('workflow', 'confidenceThresholdConfig', {
+                  ...confidenceConfig,
+                  autoApprove: e.target.checked
+                })}
+              />
+              Enable Auto-Approval
+            </label>
+            <small className="form-help">Automatically queue high-confidence suggestions for batch execution</small>
+          </div>
+
+          <div className="form-group">
+            <label className="checkbox-label">
+              <input
+                type="checkbox"
+                checked={confidenceConfig.enableManualOverride}
+                onChange={(e) => handlePreferenceChange('workflow', 'confidenceThresholdConfig', {
+                  ...confidenceConfig,
+                  enableManualOverride: e.target.checked
+                })}
+              />
+              Enable Manual Override
+            </label>
+            <small className="form-help">Allow manual promotion or demotion of suggestions regardless of confidence</small>
+          </div>
+
+          <div className="form-group">
+            <label className="checkbox-label">
+              <input
+                type="checkbox"
+                checked={confidenceConfig.enableStatistics}
+                onChange={(e) => handlePreferenceChange('workflow', 'confidenceThresholdConfig', {
+                  ...confidenceConfig,
+                  enableStatistics: e.target.checked
+                })}
+              />
+              Enable Statistics Tracking
+            </label>
+            <small className="form-help">Track confidence filtering effectiveness and suggestion quality metrics</small>
+          </div>
+
+          {confidencePreview && (
+            <div className="confidence-preview">
+              <h4>Filtering Preview</h4>
+              <div className="preview-stats">
+                <div className="stat-item">
+                  <span className="stat-label">Auto-Approved:</span>
+                  <span className="stat-value stat-auto-approve">
+                    {confidencePreview.statistics.autoApproved} ({Math.round((confidencePreview.statistics.autoApproved / confidencePreview.statistics.totalSuggestions) * 100)}%)
+                  </span>
+                </div>
+                <div className="stat-item">
+                  <span className="stat-label">Manual Review:</span>
+                  <span className="stat-value stat-manual-review">
+                    {confidencePreview.statistics.manualReview} ({Math.round((confidencePreview.statistics.manualReview / confidencePreview.statistics.totalSuggestions) * 100)}%)
+                  </span>
+                </div>
+                <div className="stat-item">
+                  <span className="stat-label">Rejected:</span>
+                  <span className="stat-value stat-rejected">
+                    {confidencePreview.statistics.rejected} ({Math.round((confidencePreview.statistics.rejected / confidencePreview.statistics.totalSuggestions) * 100)}%)
+                  </span>
+                </div>
+                <div className="stat-item">
+                  <span className="stat-label">Efficiency:</span>
+                  <span className="stat-value">
+                    {confidencePreview.statistics.filteringEffectiveness}%
+                  </span>
+                </div>
+              </div>
+              
+              <div className="preview-suggestions">
+                <h5>Sample Filtering Results (Threshold: {Math.round(effectiveThreshold * 100)}%)</h5>
+                <div className="suggestions-list">
+                  {confidencePreview.sampleSuggestions.slice(0, 5).map((suggestion, index) => (
+                    <div key={index} className={`suggestion-preview suggestion-${suggestion.category}`}>
+                      <div className="suggestion-filename">{suggestion.filename}</div>
+                      <div className="suggestion-confidence">{Math.round(suggestion.confidence * 100)}%</div>
+                      <div className="suggestion-category">
+                        {suggestion.category === SuggestionCategory.AUTO_APPROVE && '✅ Auto'}
+                        {suggestion.category === SuggestionCategory.MANUAL_REVIEW && '👁️ Review'}
+                        {suggestion.category === SuggestionCategory.REJECT && '❌ Reject'}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
           )}
         </div>
 
-        <div className="form-group">
-          <label className="checkbox-label">
-            <input
-              type="checkbox"
-              checked={preferences?.workflow.requireConfirmation || true}
-              onChange={(e) => handlePreferenceChange('workflow', 'requireConfirmation', e.target.checked)}
-            />
-            Require Confirmation for Batch Operations
-          </label>
-          <small className="form-help">Show confirmation dialog before executing batch operations</small>
-        </div>
+        <div className="settings-section">
+          <h3>Legacy Automation Settings</h3>
+          <div className="form-group">
+            <label className="checkbox-label">
+              <input
+                type="checkbox"
+                checked={preferences?.workflow.autoApproveHighConfidence || false}
+                onChange={(e) => handlePreferenceChange('workflow', 'autoApproveHighConfidence', e.target.checked)}
+              />
+              Auto-approve High Confidence Suggestions (Legacy)
+            </label>
+            <small className="form-help">Legacy setting - use Confidence Profile above for better control</small>
+          </div>
 
-        <div className="form-group">
-          <label className="checkbox-label">
-            <input
-              type="checkbox"
-              checked={preferences?.workflow.enableBatchMode || true}
-              onChange={(e) => handlePreferenceChange('workflow', 'enableBatchMode', e.target.checked)}
-            />
-            Enable Batch Mode
-          </label>
-          <small className="form-help">Allow processing multiple files simultaneously</small>
-        </div>
+          <div className="form-group">
+            <label htmlFor="confidenceThreshold">Confidence Threshold (Legacy)</label>
+            <div className="slider-group">
+              <input
+                type="range"
+                id="confidenceThreshold"
+                min="0.1"
+                max="1.0"
+                step="0.05"
+                value={preferences?.workflow.confidenceThreshold || 0.8}
+                onChange={(e) => handlePreferenceChange('workflow', 'confidenceThreshold', parseFloat(e.target.value))}
+                className="form-slider"
+              />
+              <span className="slider-value">{((preferences?.workflow.confidenceThreshold || 0.8) * 100).toFixed(0)}%</span>
+            </div>
+            <small className="form-help">Legacy setting - use Confidence Profile above for better control</small>
+            {validationErrors['workflow.confidenceThreshold'] && (
+              <div className="error-message">{validationErrors['workflow.confidenceThreshold']}</div>
+            )}
+          </div>
 
-        <div className="form-group">
-          <label htmlFor="defaultBatchSize">Default Batch Size</label>
-          <input
-            type="number"
-            id="defaultBatchSize"
-            value={preferences?.workflow.defaultBatchSize || 50}
-            onChange={(e) => handlePreferenceChange('workflow', 'defaultBatchSize', parseInt(e.target.value))}
-            className="form-control"
-            min="1"
-            max="1000"
-          />
-          <small className="form-help">Default number of files to process in each batch</small>
-          {validationErrors['workflow.defaultBatchSize'] && (
-            <div className="error-message">{validationErrors['workflow.defaultBatchSize']}</div>
-          )}
+          <div className="form-group">
+            <label className="checkbox-label">
+              <input
+                type="checkbox"
+                checked={preferences?.workflow.requireConfirmation || true}
+                onChange={(e) => handlePreferenceChange('workflow', 'requireConfirmation', e.target.checked)}
+              />
+              Require Confirmation for Batch Operations
+            </label>
+            <small className="form-help">Show confirmation dialog before executing batch operations</small>
+          </div>
+
+          <div className="form-group">
+            <label className="checkbox-label">
+              <input
+                type="checkbox"
+                checked={preferences?.workflow.enableBatchMode || true}
+                onChange={(e) => handlePreferenceChange('workflow', 'enableBatchMode', e.target.checked)}
+              />
+              Enable Batch Mode
+            </label>
+            <small className="form-help">Allow processing multiple files simultaneously</small>
+          </div>
+
+          <div className="form-group">
+            <label htmlFor="defaultBatchSize">Default Batch Size</label>
+            <input
+              type="number"
+              id="defaultBatchSize"
+              value={preferences?.workflow.defaultBatchSize || 50}
+              onChange={(e) => handlePreferenceChange('workflow', 'defaultBatchSize', parseInt(e.target.value))}
+              className="form-control"
+              min="1"
+              max="1000"
+            />
+            <small className="form-help">Default number of files to process in each batch</small>
+            {validationErrors['workflow.defaultBatchSize'] && (
+              <div className="error-message">{validationErrors['workflow.defaultBatchSize']}</div>
+            )}
+          </div>
         </div>
       </div>
-    </div>
-  );
+    );
+  };
+
+  const renderManualReviewTab = () => {
+    const handleQueueConfigChange = (key: keyof ManualReviewQueueConfig, value: any) => {
+      const newConfig = { ...reviewQueueConfig, [key]: value };
+      setReviewQueueConfig(newConfig);
+    };
+
+    return (
+      <div className="settings-tab-content">
+        <div className="settings-section">
+          <h3>Manual Review Queue Configuration</h3>
+          <p>Configure how the manual review queue operates for confidence-filtered suggestions.</p>
+          
+          <div className="form-group">
+            <label htmlFor="maxQueueSize">Maximum Queue Size</label>
+            <input
+              id="maxQueueSize"
+              type="number"
+              value={reviewQueueConfig.maxQueueSize}
+              onChange={(e) => handleQueueConfigChange('maxQueueSize', parseInt(e.target.value))}
+              className="form-control"
+              min="10"
+              max="10000"
+            />
+            <small className="form-help">Maximum number of items that can be queued for manual review</small>
+          </div>
+
+          <div className="form-group">
+            <label htmlFor="batchSize">Default Batch Size</label>
+            <input
+              id="batchSize"
+              type="number"
+              value={reviewQueueConfig.batchSize}
+              onChange={(e) => handleQueueConfigChange('batchSize', parseInt(e.target.value))}
+              className="form-control"
+              min="1"
+              max="500"
+            />
+            <small className="form-help">Number of items to display per batch in review interface</small>
+          </div>
+
+          <div className="form-group">
+            <label htmlFor="priorityThreshold">Priority Threshold</label>
+            <input
+              id="priorityThreshold"
+              type="range"
+              value={reviewQueueConfig.priorityThreshold}
+              onChange={(e) => handleQueueConfigChange('priorityThreshold', parseFloat(e.target.value))}
+              className="form-range"
+              min="0"
+              max="1"
+              step="0.05"
+            />
+            <div className="range-labels">
+              <span>Low Priority</span>
+              <span className="current-value">{Math.round(reviewQueueConfig.priorityThreshold * 100)}%</span>
+              <span>High Priority</span>
+            </div>
+            <small className="form-help">Confidence threshold above which suggestions get higher review priority</small>
+          </div>
+
+          <div className="form-group">
+            <label htmlFor="autoCleanupDays">Auto Cleanup (Days)</label>
+            <input
+              id="autoCleanupDays"
+              type="number"
+              value={reviewQueueConfig.autoCleanupDays}
+              onChange={(e) => handleQueueConfigChange('autoCleanupDays', parseInt(e.target.value))}
+              className="form-control"
+              min="1"
+              max="365"
+            />
+            <small className="form-help">Number of days after which reviewed items are automatically cleaned up</small>
+          </div>
+        </div>
+
+        <div className="settings-section">
+          <h3>Manual Review Interface</h3>
+          {manualReviewQueue ? (
+            <ManualReviewQueueUI 
+              queue={manualReviewQueue}
+              onProcessDecision={(entryId, decision, reason) => {
+                console.log('Processed decision:', { entryId, decision, reason });
+                // TODO: Handle decision processing - could trigger batch operations
+              }}
+              onBatchReview={(decisions) => {
+                console.log('Batch review processed:', decisions);
+                // TODO: Handle batch review - could trigger batch operations
+              }}
+            />
+          ) : (
+            <div className="loading-placeholder">
+              <p>Initializing manual review queue...</p>
+            </div>
+          )}
+        </div>
+
+        <div className="settings-section">
+          <h3>Review Workflow Tips</h3>
+          <div className="info-panel">
+            <h4>🔍 Review Process</h4>
+            <ul>
+              <li><strong>Single Review:</strong> Click "Review" on any item to open detailed review modal</li>
+              <li><strong>Batch Mode:</strong> Enable batch mode to review multiple items simultaneously</li>
+              <li><strong>Filtering:</strong> Use filters to focus on specific confidence ranges or operation types</li>
+              <li><strong>Priority Sorting:</strong> Items are sorted by priority based on confidence scores</li>
+            </ul>
+          </div>
+          
+          <div className="info-panel">
+            <h4>⚙️ Decision Guidelines</h4>
+            <ul>
+              <li><strong>Approve:</strong> When AI suggestion is accurate and safe to execute</li>
+              <li><strong>Reject:</strong> When suggestion is incorrect or potentially harmful</li>
+              <li><strong>Override:</strong> Manual overrides are tracked for audit purposes</li>
+              <li><strong>Batch Processing:</strong> Approved decisions are queued for batch execution</li>
+            </ul>
+          </div>
+
+          <div className="info-panel">
+            <h4>📊 Queue Management</h4>
+            <ul>
+              <li><strong>Auto Cleanup:</strong> Old reviewed items are automatically removed</li>
+              <li><strong>Size Limits:</strong> Queue size is managed to prevent memory issues</li>
+              <li><strong>Statistics:</strong> Track review efficiency and confidence distributions</li>
+              <li><strong>Export:</strong> Review decisions can be exported for analysis</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    );
+  };
 
   const renderNotificationsTab = () => (
     <div className="settings-tab-content">
@@ -882,6 +1249,7 @@ export const Settings: React.FC = () => {
     { id: 'appearance', label: 'Appearance', icon: '🎨' },
     { id: 'theme', label: 'Theme', icon: '🌈' },
     { id: 'workflow', label: 'Workflow', icon: '⚙️' },
+    { id: 'manual-review', label: 'Manual Review', icon: '👁️' },
     { id: 'notifications', label: 'Notifications', icon: '🔔' },
     { id: 'advanced', label: 'Advanced', icon: '🔧' },
     { id: 'profile', label: 'Profile', icon: '👤' }
@@ -920,6 +1288,7 @@ export const Settings: React.FC = () => {
           {activeTab === 'appearance' && renderAppearanceTab()}
           {activeTab === 'theme' && <ThemeCustomizer />}
           {activeTab === 'workflow' && renderWorkflowTab()}
+          {activeTab === 'manual-review' && renderManualReviewTab()}
           {activeTab === 'notifications' && renderNotificationsTab()}
           {activeTab === 'advanced' && renderAdvancedTab()}
           {activeTab === 'profile' && renderProfileTab()}

@@ -119,6 +119,117 @@ contextBridge.exposeInMainWorld('electronAPI', {
     return () => ipcRenderer.removeListener('analysis:error', wrappedCallback);
   },
 
+  // Suggestion execution progress monitoring
+  onSuggestionExecutionStarted: (callback: (data: { batchId: string; operations: any[] }) => void) => {
+    const wrappedCallback = (_event: any, data: { batchId: string; operations: any[] }) => callback(data);
+    ipcRenderer.on('suggestion:executionStarted', wrappedCallback);
+    return () => ipcRenderer.removeListener('suggestion:executionStarted', wrappedCallback);
+  },
+
+  onSuggestionExecutionProgress: (callback: (data: { batchId: string; progress: any }) => void) => {
+    const wrappedCallback = (_event: any, data: { batchId: string; progress: any }) => callback(data);
+    ipcRenderer.on('suggestion:executionProgress', wrappedCallback);
+    return () => ipcRenderer.removeListener('suggestion:executionProgress', wrappedCallback);
+  },
+
+  onSuggestionExecutionCompleted: (callback: (data: { batchId: string; results: any }) => void) => {
+    const wrappedCallback = (_event: any, data: { batchId: string; results: any }) => callback(data);
+    ipcRenderer.on('suggestion:executionCompleted', wrappedCallback);
+    return () => ipcRenderer.removeListener('suggestion:executionCompleted', wrappedCallback);
+  },
+
+  onSuggestionExecutionFailed: (callback: (data: { batchId: string; error: any }) => void) => {
+    const wrappedCallback = (_event: any, data: { batchId: string; error: any }) => callback(data);
+    ipcRenderer.on('suggestion:executionFailed', wrappedCallback);
+    return () => ipcRenderer.removeListener('suggestion:executionFailed', wrappedCallback);
+  },
+
+  // Batch execution methods
+  executeBatchOperations: (operations: Array<{
+    type: 'rename' | 'move';
+    sourcePath: string;
+    targetPath: string;
+    fileId: number;
+    suggestionId?: number;
+  }>, options?: {
+    priority?: 'high' | 'medium' | 'low';
+    continueOnError?: boolean;
+    createBackups?: boolean;
+  }) => {
+    if (!Array.isArray(operations)) {
+      throw new Error('Operations must be an array');
+    }
+    return ipcRenderer.invoke('batch:execute', operations, options);
+  },
+
+  cancelBatchExecution: (batchId: string, reason?: string) => {
+    if (typeof batchId !== 'string') {
+      throw new Error('Invalid batch ID');
+    }
+    return ipcRenderer.invoke('batch:cancel', batchId, reason);
+  },
+
+  getBatchProgress: (batchId: string) => {
+    if (typeof batchId !== 'string') {
+      throw new Error('Invalid batch ID');
+    }
+    return ipcRenderer.invoke('batch:getProgress', batchId);
+  },
+
+  getBatchQueueStatus: () => {
+    return ipcRenderer.invoke('batch:getQueueStatus');
+  },
+
+  validateBatchOperations: (operations: Array<{
+    type: 'rename' | 'move';
+    sourcePath: string;
+    targetPath: string;
+    fileId: number;
+    suggestionId?: number;
+  }>) => {
+    if (!Array.isArray(operations)) {
+      throw new Error('Operations must be an array');
+    }
+    return ipcRenderer.invoke('batch:validate', operations);
+  },
+
+  // Suggestion execution methods
+  executeSuggestions: (options: {
+    fileIds?: number[];
+    suggestionIds?: number[];
+    selectionCriteria?: {
+      confidenceThreshold?: number;
+      types?: string[];
+      grouping?: 'none' | 'confidence' | 'type' | 'directory';
+    };
+    executionOptions?: {
+      priority?: 'high' | 'medium' | 'low';
+      continueOnError?: boolean;
+      createBackups?: boolean;
+      validateBefore?: boolean;
+    };
+  }) => {
+    return ipcRenderer.invoke('suggestions:execute', options);
+  },
+
+  getSuggestionExecutionStatus: (batchId?: string) => {
+    return ipcRenderer.invoke('suggestions:getExecutionStatus', batchId);
+  },
+
+  cancelSuggestionExecution: (batchId: string, reason?: string) => {
+    if (typeof batchId !== 'string') {
+      throw new Error('Invalid batch ID');
+    }
+    return ipcRenderer.invoke('suggestions:cancelExecution', batchId, reason);
+  },
+
+  undoTransaction: (transactionId: string, reason?: string) => {
+    if (typeof transactionId !== 'string') {
+      throw new Error('Invalid transaction ID');
+    }
+    return ipcRenderer.invoke('suggestions:undoTransaction', transactionId, reason);
+  },
+
   // Settings and user preferences management
   settings: {
     getUserProfile: () => ipcRenderer.invoke('settings:getUserProfile'),
@@ -167,6 +278,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
       'batch:updateOperationPriority',
       'batch:createOperation',
       'batch:getOperationStatus',
+      // Batch execution channels
+      'batch:execute',
+      'batch:cancel',
+      'batch:getProgress',
+      'batch:getQueueStatus',
+      'batch:validate',
+      // Suggestion execution channels
+      'suggestions:execute',
+      'suggestions:getExecutionStatus',
+      'suggestions:cancelExecution',
+      'suggestions:undoTransaction',
       // History operation channels
       'history:getOperations',
       'history:prepareUndo',
@@ -242,6 +364,18 @@ contextBridge.exposeInMainWorld('electronAPI', {
       'batch:operationProgress',
       'batch:operationStatusChanged',
       'batch:operation-update',
+      // Batch execution event channels
+      'batch:progress',
+      'batch:started',
+      'batch:completed',
+      'batch:failed',
+      'batch:error',
+      'batch:complete',
+      // Suggestion execution event channels
+      'suggestion:executionStarted',
+      'suggestion:executionProgress',
+      'suggestion:executionCompleted',
+      'suggestion:executionFailed',
       // System monitoring event channels
       'system:health-update',
       'system:error',

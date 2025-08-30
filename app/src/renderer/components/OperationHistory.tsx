@@ -374,7 +374,7 @@ const OperationHistory: React.FC<OperationHistoryProps> = ({
   if (loading) {
     return (
       <div className={`operation-history loading ${className}`}>
-        <div className="loading-spinner"></div>
+        <div className="loading-spinner" data-testid="loading-spinner"></div>
         <span>Loading operation history...</span>
       </div>
     );

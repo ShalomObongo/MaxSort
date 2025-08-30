@@ -28,15 +28,39 @@ interface AnalysisProgress {
 }
 
 interface AnalysisSessionResult {
-  requestId: string;
   totalFiles: number;
   successfulFiles: number;
   failedFiles: number;
-  results: any[];
+  errors: string[];
   totalExecutionTime: number;
   averageExecutionTime: number;
-  completedAt: number;
-  errorSummary?: string[];
+  analysisType: string;
+  requestId: string;
+}
+
+// Batch execution progress interface
+interface BatchExecutionProgress {
+  batchId: string;
+  batch: {
+    id: string;
+    status: 'pending' | 'processing' | 'completed' | 'failed' | 'cancelled';
+    operations: Array<{
+      id: string;
+      type: 'rename' | 'move' | 'delete';
+      status: 'pending' | 'processing' | 'completed' | 'failed';
+      originalPath: string;
+      targetPath: string;
+      error?: string;
+    }>;
+    progress: {
+      total: number;
+      completed: number;
+      failed: number;
+      successRate: number;
+    };
+    startedAt?: number;
+    completedAt?: number;
+  };
 }
 
 interface DashboardProps {
@@ -58,6 +82,17 @@ const Dashboard: React.FC<DashboardProps> = ({ onWorkflowComplete }) => {
   const [analysisError, setAnalysisError] = useState<string | null>(null);
   const [currentRequestId, setCurrentRequestId] = useState<string | null>(null);
   const [scannedFileIds, setScannedFileIds] = useState<number[]>([]);
+
+  // Suggestion execution state
+  const [isExecutingSuggestions, setIsExecutingSuggestions] = useState(false);
+  const [suggestionExecutionProgress, setSuggestionExecutionProgress] = useState<{
+    transactionId?: string;
+    completedOperations: number;
+    totalOperations: number;
+    errors: string[];
+  } | null>(null);
+  const [suggestionExecutionError, setSuggestionExecutionError] = useState<string | null>(null);
+  const [currentTransactionId, setCurrentTransactionId] = useState<string | null>(null);
 
   const [workflowSteps, setWorkflowSteps] = useState<WorkflowStep[]>([
     {
@@ -154,10 +189,68 @@ const Dashboard: React.FC<DashboardProps> = ({ onWorkflowComplete }) => {
       ));
     });
 
+    // Suggestion execution progress updates
+    const removeSuggestionStartedListener = electronAPI.onSuggestionExecutionStarted?.((data) => {
+      console.log('Suggestion execution started:', data);
+      setSuggestionExecutionProgress({
+        completedOperations: 0,
+        totalOperations: data.operations.length,
+        errors: []
+      });
+      
+      // Update workflow step status during execution
+      if (currentStep === 4) {
+        setWorkflowSteps(prev => prev.map((step, index) => 
+          index === 4 ? { ...step, status: 'active' } : step
+        ));
+      }
+    });
+
+    // Suggestion execution progress updates
+    const removeSuggestionProgressListener = electronAPI.onSuggestionExecutionProgress?.((data) => {
+      console.log('Suggestion execution progress:', data);
+      if (data.progress) {
+        setSuggestionExecutionProgress(prev => ({
+          ...prev!,
+          completedOperations: data.progress.completedOperations || prev?.completedOperations || 0,
+          totalOperations: data.progress.totalOperations || prev?.totalOperations || 0,
+          errors: data.progress.errors || prev?.errors || []
+        }));
+      }
+    });
+
+    // Suggestion execution completion
+    const removeSuggestionCompleteListener = electronAPI.onSuggestionExecutionCompleted?.((data) => {
+      console.log('Suggestion execution complete:', data);
+      setIsExecutingSuggestions(false);
+      setSuggestionExecutionProgress(null);
+      
+      // Mark execution step as completed
+      setWorkflowSteps(prev => prev.map((step, index) => 
+        index === 4 ? { ...step, status: 'completed' } : step
+      ));
+    });
+
+    // Suggestion execution errors
+    const removeSuggestionErrorListener = electronAPI.onSuggestionExecutionFailed?.((data) => {
+      console.error('Suggestion execution error:', data);
+      setSuggestionExecutionError(data.error?.message || 'Suggestion execution failed');
+      setIsExecutingSuggestions(false);
+      
+      // Mark execution step as error
+      setWorkflowSteps(prev => prev.map((step, index) => 
+        index === 4 ? { ...step, status: 'error' } : step
+      ));
+    });
+
     return () => {
       removeProgressListener?.();
       removeCompleteListener?.();
       removeErrorListener?.();
+      removeSuggestionStartedListener?.();
+      removeSuggestionProgressListener?.();
+      removeSuggestionCompleteListener?.();
+      removeSuggestionErrorListener?.();
     };
   }, [currentStep]);
 
@@ -272,6 +365,80 @@ const Dashboard: React.FC<DashboardProps> = ({ onWorkflowComplete }) => {
     handleStartAnalysis();
   }, [handleStartAnalysis]);
 
+  // Suggestion execution handlers
+  const handleStartSuggestionExecution = useCallback(async () => {
+    try {
+      setIsExecutingSuggestions(true);
+      setSuggestionExecutionError(null);
+      setSuggestionExecutionProgress(null);
+      
+      const electronAPI = window.electronAPI;
+      if (!electronAPI.executeSuggestions) {
+        throw new Error('Suggestion execution functionality not available');
+      }
+
+      // Execute approved suggestions for the scanned files
+      console.log('Starting suggestion execution with files:', scannedFileIds);
+
+      const result = await electronAPI.executeSuggestions({
+        fileIds: scannedFileIds,
+        selectionCriteria: {
+          confidenceThreshold: 0.7, // Only execute high-confidence suggestions
+          types: ['rename', 'move']
+        },
+        executionOptions: {
+          priority: 'high',
+          continueOnError: false,
+          createBackups: true,
+          validateBefore: true
+        }
+      });
+      
+      if (!result.success) {
+        throw new Error(result.error || 'Failed to start suggestion execution');
+      }
+      
+      setCurrentTransactionId(result.transactionId || null);
+
+      // Update UI to show execution is starting
+      setWorkflowSteps(prev => prev.map((step, index) => 
+        index === 4 ? { ...step, status: 'active' } : step
+      ));
+
+    } catch (error) {
+      console.error('Failed to start suggestion execution:', error);
+      setSuggestionExecutionError(error instanceof Error ? error.message : 'Failed to start execution');
+      setIsExecutingSuggestions(false);
+      
+      setWorkflowSteps(prev => prev.map((step, index) => 
+        index === 4 ? { ...step, status: 'error' } : step
+      ));
+    }
+  }, [scannedFileIds]);
+
+  const handleCancelSuggestionExecution = useCallback(async () => {
+    if (!currentTransactionId) return;
+
+    try {
+      const electronAPI = window.electronAPI;
+      if (electronAPI.cancelSuggestionExecution) {
+        await electronAPI.cancelSuggestionExecution(currentTransactionId, 'User cancellation');
+      }
+      
+      setIsExecutingSuggestions(false);
+      setSuggestionExecutionProgress(null);
+      setCurrentTransactionId(null);
+      
+    } catch (error) {
+      console.error('Failed to cancel suggestion execution:', error);
+    }
+  }, [currentTransactionId]);
+
+  const handleRetrySuggestionExecution = useCallback(() => {
+    setSuggestionExecutionError(null);
+    handleStartSuggestionExecution();
+  }, [handleStartSuggestionExecution]);
+
   const handleNextStep = () => {
     if (currentStep < workflowSteps.length - 1) {
       setCurrentStep(currentStep + 1);
@@ -305,6 +472,8 @@ const Dashboard: React.FC<DashboardProps> = ({ onWorkflowComplete }) => {
         return analysisResults !== null && analysisResults.successfulFiles > 0;
       case 3: // Review (can proceed if results exist)
         return analysisResults !== null;
+      case 4: // Execute (final step)
+        return false;
       default:
         return false;
     }
@@ -471,6 +640,118 @@ const Dashboard: React.FC<DashboardProps> = ({ onWorkflowComplete }) => {
                 </button>
               </div>
             )}
+          </div>
+        );
+      
+      case 4: // Execute Operations
+        return (
+          <div className="step-content">
+            <div className="execution-ready">
+              <h3>Execute File Operations</h3>
+              <div className="execution-summary">
+                <p>Ready to apply the approved file organization operations using AI-powered transactional execution.</p>
+                {analysisResults && (
+                  <div className="operation-stats">
+                    <p><strong>Files analyzed:</strong> {analysisResults.successfulFiles}</p>
+                    <p><strong>Operations ready:</strong> Approved suggestions will be executed with rollback capability</p>
+                  </div>
+                )}
+              </div>
+
+              {/* Suggestion Execution Progress */}
+              {isExecutingSuggestions && suggestionExecutionProgress && (
+                <div className="execution-progress">
+                  <h4>Execution in Progress</h4>
+                  <div className="progress-info">
+                    {currentTransactionId && (
+                      <p><strong>Transaction ID:</strong> {currentTransactionId}</p>
+                    )}
+                    <p><strong>Status:</strong> Processing</p>
+                    <p><strong>Progress:</strong> {suggestionExecutionProgress.completedOperations} / {suggestionExecutionProgress.totalOperations} operations</p>
+                    <p><strong>Success rate:</strong> {Math.round((suggestionExecutionProgress.completedOperations / Math.max(suggestionExecutionProgress.totalOperations, 1)) * 100)}%</p>
+                    {suggestionExecutionProgress.errors.length > 0 && (
+                      <p><strong>Errors:</strong> {suggestionExecutionProgress.errors.length}</p>
+                    )}
+                  </div>
+                  <div className="progress-bar">
+                    <div 
+                      className="progress-fill"
+                      style={{ 
+                        width: `${(suggestionExecutionProgress.completedOperations / Math.max(suggestionExecutionProgress.totalOperations, 1)) * 100}%` 
+                      }}
+                    />
+                  </div>
+                  <button 
+                    className="action-button secondary"
+                    onClick={handleCancelSuggestionExecution}
+                  >
+                    Cancel Execution
+                  </button>
+                </div>
+              )}
+
+              {/* Suggestion Execution Error */}
+              {suggestionExecutionError && (
+                <div className="execution-error">
+                  <h4>Execution Failed</h4>
+                  <p className="error-message">{suggestionExecutionError}</p>
+                  <div className="error-actions">
+                    <button 
+                      className="action-button primary"
+                      onClick={handleRetrySuggestionExecution}
+                    >
+                      Retry Execution
+                    </button>
+                    <button 
+                      className="action-button secondary"
+                      onClick={() => setSuggestionExecutionError(null)}
+                    >
+                      Dismiss
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Start Suggestion Execution Button */}
+              {!isExecutingSuggestions && !suggestionExecutionError && (
+                <button 
+                  className="action-button primary"
+                  onClick={handleStartSuggestionExecution}
+                >
+                  ⚡ Execute AI-Recommended Operations
+                </button>
+              )}
+
+              {/* Execution Complete */}
+              {!isExecutingSuggestions && suggestionExecutionProgress && 
+                suggestionExecutionProgress.completedOperations === suggestionExecutionProgress.totalOperations && (
+                <div className="execution-complete">
+                  <h4>✅ Execution Complete!</h4>
+                  <p>All approved file operations have been successfully applied using transactional execution.</p>
+                  <div className="completion-stats">
+                    <p><strong>Total operations:</strong> {suggestionExecutionProgress.totalOperations}</p>
+                    <p><strong>Successful:</strong> {suggestionExecutionProgress.completedOperations}</p>
+                    <p><strong>Failed:</strong> {suggestionExecutionProgress.errors.length}</p>
+                    <p><strong>Success rate:</strong> {Math.round((suggestionExecutionProgress.completedOperations / Math.max(suggestionExecutionProgress.totalOperations, 1)) * 100)}%</p>
+                  </div>
+                  {currentTransactionId && (
+                    <div className="transaction-actions">
+                      <button 
+                        className="action-button secondary"
+                        onClick={() => {
+                          const electronAPI = window.electronAPI;
+                          if (electronAPI.undoTransaction) {
+                            electronAPI.undoTransaction(currentTransactionId, 'User requested undo');
+                          }
+                        }}
+                      >
+                        🔄 Undo All Operations
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
         );
       

@@ -46,10 +46,60 @@ export interface ElectronAPI {
   cancelBatchOperation?: (operationId: string) => Promise<{ success: boolean; error?: string }>;
   updateOperationPriority?: (operationId: string, priority: string) => Promise<{ success: boolean; error?: string }>;
   createBatchOperation?: (type: string, configuration: any) => Promise<{ success: boolean; operationId?: string; error?: string }>;
+  
+  // Batch execution methods
+  executeBatchOperations?: (operations: Array<{
+    type: 'rename' | 'move';
+    sourcePath: string;
+    targetPath: string;
+    fileId: number;
+    suggestionId?: number;
+  }>, options?: {
+    priority?: 'high' | 'medium' | 'low';
+    continueOnError?: boolean;
+    createBackups?: boolean;
+  }) => Promise<{ success: boolean; batchId?: string; error?: string }>;
+  cancelBatchExecution?: (batchId: string, reason?: string) => Promise<{ success: boolean; error?: string }>;
+  getBatchProgress?: (batchId: string) => Promise<{ success: boolean; progress?: any; error?: string }>;
+  getBatchQueueStatus?: () => Promise<{ success: boolean; status?: any; error?: string }>;
+  validateBatchOperations?: (operations: Array<{
+    type: 'rename' | 'move';
+    sourcePath: string;
+    targetPath: string;
+    fileId: number;
+    suggestionId?: number;
+  }>) => Promise<{ success: boolean; validation?: any; error?: string }>;
 
   // Batch operation event listeners
   onBatchOperationProgress?: (callback: (progress: any) => void) => () => void;
   onBatchOperationStatusChanged?: (callback: (status: any) => void) => () => void;
+
+  // Suggestion execution methods
+  executeSuggestions?: (options: {
+    fileIds?: number[];
+    suggestionIds?: number[];
+    selectionCriteria?: {
+      confidenceThreshold?: number;
+      types?: string[];
+      grouping?: 'none' | 'confidence' | 'type' | 'directory';
+    };
+    executionOptions?: {
+      priority?: 'high' | 'medium' | 'low';
+      continueOnError?: boolean;
+      createBackups?: boolean;
+      validateBefore?: boolean;
+    };
+  }) => Promise<{ success: boolean; transactionId?: string; completedOperations?: number; errors?: string[]; error?: string }>;
+
+  getSuggestionExecutionStatus?: (batchId?: string) => Promise<{ success: boolean; batch?: any; activeBatches?: any[]; error?: string }>;
+  cancelSuggestionExecution?: (batchId: string, reason?: string) => Promise<{ success: boolean; error?: string }>;
+  undoTransaction?: (transactionId: string, reason?: string) => Promise<{ success: boolean; completedOperations?: number; errors?: string[]; error?: string }>;
+
+  // Suggestion execution event listeners
+  onSuggestionExecutionStarted?: (callback: (data: { batchId: string; operations: any[] }) => void) => () => void;
+  onSuggestionExecutionProgress?: (callback: (data: { batchId: string; progress: any }) => void) => () => void;
+  onSuggestionExecutionCompleted?: (callback: (data: { batchId: string; results: any }) => void) => () => void;
+  onSuggestionExecutionFailed?: (callback: (data: { batchId: string; error: any }) => void) => () => void;
 
   // Operation history and audit trail management
   getOperationHistory?: () => Promise<{ success: boolean; operations?: any[]; auditTrail?: any[]; error?: string }>;
