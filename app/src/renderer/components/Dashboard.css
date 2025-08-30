@@ -1,0 +1,435 @@
+/* Dashboard.css - Dashboard component styles */
+
+.dashboard {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 0 16px;
+}
+
+.dashboard-header {
+  text-align: center;
+  margin-bottom: 32px;
+}
+
+.dashboard-header h1 {
+  font-size: 32px;
+  font-weight: 600;
+  color: #1e293b;
+  margin: 0 0 12px 0;
+}
+
+.dashboard-header p {
+  font-size: 16px;
+  color: #64748b;
+  margin: 0;
+}
+
+/* Workflow Progress Styles */
+.workflow-progress {
+  background: #ffffff;
+  border-radius: 12px;
+  padding: 24px;
+  margin-bottom: 32px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  border: 1px solid #e2e8f0;
+}
+
+.progress-steps {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  overflow-x: auto;
+  padding-bottom: 8px;
+}
+
+.progress-step {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-width: 160px;
+  position: relative;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  padding: 16px 8px;
+  border-radius: 8px;
+}
+
+.progress-step.accessible:hover {
+  background: #f8fafc;
+}
+
+.progress-step:not(.accessible) {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.step-circle {
+  position: relative;
+  width: 60px;
+  height: 60px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 12px;
+  transition: all 0.3s ease;
+}
+
+.progress-step.pending .step-circle {
+  background: #f1f5f9;
+  border: 2px solid #e2e8f0;
+  color: #94a3b8;
+}
+
+.progress-step.active .step-circle {
+  background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+  border: 2px solid #2563eb;
+  color: white;
+  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
+}
+
+.progress-step.completed .step-circle {
+  background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+  border: 2px solid #059669;
+  color: white;
+}
+
+.progress-step.error .step-circle {
+  background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+  border: 2px solid #dc2626;
+  color: white;
+}
+
+.step-icon {
+  font-size: 24px;
+  z-index: 2;
+}
+
+.step-number {
+  position: absolute;
+  bottom: -6px;
+  right: -6px;
+  width: 20px;
+  height: 20px;
+  background: #374151;
+  color: white;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 600;
+  border: 2px solid white;
+}
+
+.progress-step.active .step-number {
+  background: #1d4ed8;
+}
+
+.progress-step.completed .step-number {
+  background: #047857;
+}
+
+.step-info {
+  text-align: center;
+}
+
+.step-title {
+  font-weight: 600;
+  font-size: 14px;
+  color: #1e293b;
+  margin-bottom: 4px;
+}
+
+.progress-step.pending .step-title {
+  color: #94a3b8;
+}
+
+.step-description {
+  font-size: 12px;
+  color: #64748b;
+  line-height: 1.4;
+}
+
+.step-connector {
+  position: absolute;
+  top: 46px;
+  right: -24px;
+  width: 32px;
+  height: 2px;
+  background: #e2e8f0;
+  z-index: 1;
+}
+
+.progress-step.completed .step-connector {
+  background: linear-gradient(90deg, #10b981 0%, #e2e8f0 100%);
+}
+
+.progress-step.active .step-connector {
+  background: linear-gradient(90deg, #3b82f6 0%, #e2e8f0 100%);
+}
+
+/* Workflow Content Styles */
+.workflow-content {
+  background: #ffffff;
+  border-radius: 12px;
+  padding: 32px;
+  margin-bottom: 24px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  border: 1px solid #e2e8f0;
+}
+
+.current-step-header {
+  text-align: center;
+  margin-bottom: 32px;
+  border-bottom: 1px solid #f1f5f9;
+  padding-bottom: 24px;
+}
+
+.current-step-header h2 {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  font-size: 24px;
+  font-weight: 600;
+  color: #1e293b;
+  margin: 0 0 8px 0;
+}
+
+.step-icon-large {
+  font-size: 32px;
+}
+
+.current-step-header p {
+  font-size: 16px;
+  color: #64748b;
+  margin: 0;
+}
+
+.step-content {
+  margin-bottom: 32px;
+}
+
+.scan-ready {
+  text-align: center;
+  padding: 24px;
+}
+
+.scan-ready h3 {
+  font-size: 20px;
+  font-weight: 600;
+  color: #1e293b;
+  margin: 0 0 16px 0;
+}
+
+.scan-summary {
+  background: #f8fafc;
+  border-radius: 8px;
+  padding: 16px;
+  margin: 16px 0;
+  text-align: left;
+}
+
+.scan-summary p {
+  margin: 8px 0;
+  font-size: 14px;
+  color: #374151;
+}
+
+.placeholder-content {
+  text-align: center;
+  padding: 48px 24px;
+  color: #64748b;
+}
+
+.placeholder-content h3 {
+  font-size: 18px;
+  color: #374151;
+  margin-bottom: 12px;
+}
+
+/* Navigation Styles */
+.step-navigation {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 24px 0 0 0;
+  border-top: 1px solid #f1f5f9;
+}
+
+.nav-button {
+  padding: 12px 24px;
+  border-radius: 8px;
+  font-weight: 500;
+  font-size: 14px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  border: 1px solid;
+  min-width: 100px;
+}
+
+.nav-button.primary {
+  background: #3b82f6;
+  color: white;
+  border-color: #3b82f6;
+}
+
+.nav-button.primary:hover:not(:disabled) {
+  background: #2563eb;
+  border-color: #2563eb;
+}
+
+.nav-button.secondary {
+  background: white;
+  color: #374151;
+  border-color: #d1d5db;
+}
+
+.nav-button.secondary:hover:not(:disabled) {
+  background: #f9fafb;
+  border-color: #9ca3af;
+}
+
+.nav-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.step-indicator {
+  font-size: 14px;
+  color: #64748b;
+  font-weight: 500;
+}
+
+.action-button {
+  padding: 12px 24px;
+  border-radius: 8px;
+  font-weight: 600;
+  font-size: 16px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  border: none;
+  margin: 16px 0;
+}
+
+.action-button.primary {
+  background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+  color: white;
+  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
+}
+
+.action-button.primary:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 16px rgba(59, 130, 246, 0.4);
+}
+
+/* Quick Status Styles */
+.quick-status {
+  background: #ffffff;
+  border-radius: 12px;
+  padding: 24px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  border: 1px solid #e2e8f0;
+}
+
+.quick-status h3 {
+  font-size: 18px;
+  font-weight: 600;
+  color: #1e293b;
+  margin: 0 0 16px 0;
+}
+
+.status-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 12px;
+}
+
+.status-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px;
+  background: #f8fafc;
+  border-radius: 6px;
+  border: 1px solid #f1f5f9;
+}
+
+.status-label {
+  font-weight: 500;
+  color: #374151;
+  font-size: 14px;
+}
+
+.status-value {
+  font-weight: 400;
+  color: #059669;
+  font-size: 14px;
+}
+
+/* Responsive Design */
+@media (max-width: 768px) {
+  .dashboard {
+    padding: 0 8px;
+  }
+  
+  .workflow-progress {
+    padding: 16px;
+  }
+  
+  .progress-steps {
+    gap: 8px;
+  }
+  
+  .progress-step {
+    min-width: 120px;
+  }
+  
+  .workflow-content {
+    padding: 24px 16px;
+  }
+  
+  .step-navigation {
+    flex-direction: column;
+    gap: 16px;
+  }
+  
+  .status-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 480px) {
+  .dashboard-header h1 {
+    font-size: 24px;
+  }
+  
+  .current-step-header h2 {
+    font-size: 20px;
+    flex-direction: column;
+    gap: 8px;
+  }
+  
+  .progress-steps {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  
+  .progress-step {
+    flex-direction: row;
+    min-width: unset;
+    text-align: left;
+  }
+  
+  .step-circle {
+    margin-bottom: 0;
+    margin-right: 16px;
+    width: 50px;
+    height: 50px;
+  }
+  
+  .step-connector {
+    display: none;
+  }
+}

@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import './DirectoryPicker.css';
+import { ElectronAPI } from '../../types/electron';
 
 // Utility function to format file sizes
 const formatFileSize = (bytes: number): string => {
@@ -13,19 +14,6 @@ const formatFileSize = (bytes: number): string => {
 interface DirectoryPickerProps {
   onDirectorySelected: (path: string) => void;
   disabled?: boolean;
-}
-
-// Extended API interface for directory operations
-interface ExtendedElectronAPI {
-  getVersion: () => Promise<string>;
-  getPlatform: () => Promise<string>;
-  getAgentStatus: () => Promise<{ status: string; agents: any[] }>;
-  selectDirectory: () => Promise<string | null>;
-  scanDirectory: (options: { rootPath: string; include?: string[]; exclude?: string[] }) => Promise<void>;
-  onScanProgress: (callback: (progress: { fileCount: number; currentFile: string; percent: number }) => void) => void;
-  removeScanProgressListener: () => void;
-  getScanResults: (rootPath?: string) => Promise<FileRecord[]>;
-  getScanJobs: () => Promise<JobRecord[]>;
 }
 
 interface FileRecord {
@@ -66,8 +54,8 @@ const DirectoryPicker: React.FC<DirectoryPickerProps> = ({ onDirectorySelected, 
   const handleSelectDirectory = async () => {
     try {
       setError('');
-      const electronAPI = window.electronAPI as ExtendedElectronAPI;
-      const path = await electronAPI.selectDirectory();
+      const electronAPI = window.electronAPI;
+      const path = await electronAPI.selectDirectory?.();
       
       if (path) {
         // Validate the path
@@ -96,33 +84,43 @@ const DirectoryPicker: React.FC<DirectoryPickerProps> = ({ onDirectorySelected, 
       setIsScanning(true);
       setScanProgress({ fileCount: 0, currentFile: '', percent: 0 });
 
-      const electronAPI = window.electronAPI as ExtendedElectronAPI;
-
-      // Set up progress listener
-      electronAPI.onScanProgress((progress) => {
+      const electronAPI = window.electronAPI;
+      
+      // Set up progress callback
+      const handleScanProgressUpdate = (progress: { fileCount: number; currentFile: string; percent: number }) => {
         setScanProgress(progress);
-      });
+      };
 
-      // Start the scan with default filters
-      await electronAPI.scanDirectory({
-        rootPath: selectedPath,
-        exclude: ['.DS_Store', 'node_modules', '.git', 'Thumbs.db']
-      });
+      let removeProgressListener: (() => void) | undefined;
+      if (electronAPI.onScanProgress) {
+        removeProgressListener = electronAPI.onScanProgress(handleScanProgressUpdate);
+      }
 
+      // Start scanning
+      await electronAPI.scanDirectory?.({ rootPath: selectedPath });
+      
       // Fetch scan results after completion
-      const results = await electronAPI.getScanResults(selectedPath);
-      setScanResults(results);
-      setShowResults(true);
+      const results = await electronAPI.getScanResults?.(selectedPath);
+      if (results) {
+        setScanResults(results);
+        setShowResults(true);
+      }
 
       setIsScanning(false);
       setScanProgress(null);
+      
+      // Clean up progress listener
+      if (removeProgressListener) {
+        removeProgressListener();
+      }
     } catch (err) {
       console.error('Failed to scan directory:', err);
       setError('Failed to scan directory. Please check permissions and try again.');
       setIsScanning(false);
       setScanProgress(null);
-      const electronAPI = window.electronAPI as ExtendedElectronAPI;
-      electronAPI.removeScanProgressListener();
+      
+      // Clean up progress listener
+      window.electronAPI.removeScanProgressListener?.();
     }
   };
 

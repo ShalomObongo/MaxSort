@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import './ModelSelector.css';
+import { ElectronAPI } from '../../types/electron';
 
 // Ollama model types (matching the backend types)
 interface OllamaModel {
@@ -32,28 +33,6 @@ interface ModelMemoryEstimate {
 interface ModelSelectorProps {
   onModelSelected: (mainModel: string | null, subModel: string | null) => void;
   disabled?: boolean;
-}
-
-// Extended API interface for model operations
-interface ExtendedElectronAPI {
-  getVersion: () => Promise<string>;
-  getPlatform: () => Promise<string>;
-  getAgentStatus: () => Promise<{ status: string; agents: any[] }>;
-  selectDirectory: () => Promise<string | null>;
-  scanDirectory: (options: { rootPath: string; include?: string[]; exclude?: string[] }) => Promise<void>;
-  onScanProgress: (callback: (progress: { fileCount: number; currentFile: string; percent: number }) => void) => void;
-  removeScanProgressListener: () => void;
-  getScanResults: (rootPath?: string) => Promise<any[]>;
-  getScanJobs: () => Promise<any[]>;
-  
-  // Model management
-  getOllamaHealth: () => Promise<OllamaHealth>;
-  getAvailableModels: () => Promise<OllamaModel[]>;
-  validateModel: (modelName: string) => Promise<boolean>;
-  getModelMemoryEstimate: (model: OllamaModel) => Promise<ModelMemoryEstimate>;
-  saveModelPreferences: (mainModel: string | null, subModel: string | null) => Promise<void>;
-  getModelPreferences: () => Promise<{ mainModel: string | null; subModel: string | null }>;
-  onOllamaHealthUpdate: (callback: (health: OllamaHealth) => void) => () => void;
 }
 
 // Utility function to format memory sizes
@@ -100,7 +79,7 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({ onModelSelected, disabled
       setIsLoading(true);
       setError('');
       
-      const electronAPI = window.electronAPI as ExtendedElectronAPI;
+      const electronAPI = window.electronAPI;
       
       // Get health status first
       const healthStatus = await electronAPI.getOllamaHealth();
@@ -143,30 +122,32 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({ onModelSelected, disabled
   };
 
   const setupHealthMonitoring = () => {
-    const electronAPI = window.electronAPI as ExtendedElectronAPI;
+    const electronAPI = window.electronAPI;
     
     // Set up health monitoring
-    const cleanup = electronAPI.onOllamaHealthUpdate((healthUpdate) => {
-      setHealth(healthUpdate);
-      
-      if (healthUpdate.status === 'unhealthy') {
-        setError(healthUpdate.message || 'Ollama connection lost');
-      } else if (healthUpdate.status === 'healthy' && error) {
-        // Clear error if we're healthy again
-        setError('');
-        loadModelData(); // Reload models
-      }
-    });
+    if (electronAPI.onOllamaHealthUpdate) {
+      const cleanup = electronAPI.onOllamaHealthUpdate((healthUpdate) => {
+        setHealth(healthUpdate);
+        
+        if (healthUpdate.status === 'unhealthy') {
+          setError(healthUpdate.message || 'Ollama connection lost');
+        } else if (healthUpdate.status === 'healthy' && error) {
+          // Clear error if we're healthy again
+          setError('');
+          loadModelData(); // Reload models
+        }
+      });
 
-    return cleanup;
+      return cleanup;
+    }
   };
 
   const validateAndSelectModel = async (modelName: string, type: 'main' | 'sub') => {
     try {
       setValidationStatus(prev => ({ ...prev, [modelName]: 'validating' }));
       
-      const electronAPI = window.electronAPI as ExtendedElectronAPI;
-      const isValid = await electronAPI.validateModel(modelName);
+      const electronAPI = window.electronAPI;
+      const isValid = await electronAPI.validateModel?.(modelName);
       
       if (isValid) {
         setValidationStatus(prev => ({ ...prev, [modelName]: 'valid' }));

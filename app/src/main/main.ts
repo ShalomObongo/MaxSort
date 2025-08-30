@@ -12,6 +12,7 @@ import { BatchOperationManager } from '../lib/batch-operation-manager';
 import { FileOperationPreviewService } from '../lib/file-operation-preview';
 import { TransactionalFileManager } from '../lib/transactional-file-manager';
 import { OperationJournal } from '../lib/operation-journal';
+import { initializeAllIPCHandlers } from './ipc-handlers';
 
 let mainWindow: BrowserWindow | null = null;
 let currentScanWorker: Worker | null = null;
@@ -65,6 +66,9 @@ app.whenReady().then(async () => {
   // Initialize database
   const db = getDatabase();
   await db.initialize();
+  
+  // Initialize enhanced IPC handlers with validation, error recovery, and real-time events
+  initializeAllIPCHandlers();
   
   createWindow();
 

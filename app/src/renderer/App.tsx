@@ -1,94 +1,136 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import './App.css';
-import DirectoryPicker from './components/DirectoryPicker';
-import ModelSelector from './components/ModelSelector';
+import './styles/themes.css';
+import AppLayout, { NavigationItem } from './components/AppLayout';
+import Dashboard from './components/Dashboard';
+import BatchOperationManager from './components/BatchOperationManager';
+import OperationHistory from './components/OperationHistory';
+import SystemHealth from './components/SystemHealth';
+import Settings from './components/Settings';
+import TroubleshootingInterface from './components/TroubleshootingInterface';
+import ErrorBoundary from './components/ErrorBoundary';
+import { NotificationProvider } from './components/UserNotificationSystem';
+import { HelpProvider } from './components/ContextualHelpSystem';
+import { AppStateProvider, useAppState } from './store/AppStateContext';
+import { ThemeProvider, loadThemePreferences } from './contexts/ThemeContext';
 
-interface ElectronAPI {
-  getVersion: () => Promise<string>;
-  getPlatform: () => Promise<string>;
-  getAgentStatus: () => Promise<{ status: string; agents: any[] }>;
-}
+// Placeholder components for unimplemented views
+const PlaceholderView: React.FC<{ title: string; description: string }> = ({ title, description }) => (
+  <div className="placeholder-view">
+    <h2>{title}</h2>
+    <p>{description}</p>
+    <p>This feature will be implemented in subsequent tasks.</p>
+  </div>
+);
 
-declare global {
-  interface Window {
-    electronAPI: ElectronAPI;
-  }
-}
+const AppContent: React.FC = () => {
+  const { state, dispatch } = useAppState();
 
-const App: React.FC = () => {
-  const [version, setVersion] = React.useState<string>('Loading...');
-  const [platform, setPlatform] = React.useState<string>('Loading...');
-  const [selectedDirectory, setSelectedDirectory] = React.useState<string>('');
-  const [selectedModels, setSelectedModels] = React.useState<{
-    mainModel: string | null;
-    subModel: string | null;
-  }>({ mainModel: null, subModel: null });
+  // Navigation configuration
+  const navigationItems: NavigationItem[] = [
+    {
+      id: 'dashboard',
+      label: 'Dashboard',
+      icon: '🏠',
+      component: <Dashboard />
+    },
+    {
+      id: 'analysis',
+      label: 'File Analysis',
+      icon: '🔍',
+      component: <PlaceholderView title="File Analysis" description="Review AI-generated file suggestions and analysis results" />,
+      disabled: true
+    },
+    {
+      id: 'operations',
+      label: 'Operations',
+      icon: '⚡',
+      component: <BatchOperationManager 
+        onOperationComplete={(operation) => {
+          console.log('Operation completed:', operation);
+          // Could update global state here
+        }}
+        onOperationFailed={(operation, error) => {
+          console.error('Operation failed:', operation, error);
+          // Could show notification here
+        }}
+        onQueueUpdated={(queue) => {
+          // Update system status with queue information
+          dispatch({
+            type: 'UPDATE_SYSTEM_STATUS',
+            payload: {
+              operations: {
+                active: queue.activeOperations,
+                pending: queue.queuedOperations,
+                completed: queue.completedOperations
+              }
+            }
+          });
+        }}
+      />,
+      badge: state.systemStatus.operations.active > 0 ? state.systemStatus.operations.active : undefined
+    },
+    {
+      id: 'history',
+      label: 'History',
+      icon: '📜',
+      component: <OperationHistory />
+    },
+    {
+      id: 'monitoring',
+      label: 'System Health',
+      icon: '💻',
+      component: <SystemHealth />
+    },
+    {
+      id: 'settings',
+      label: 'Settings',
+      icon: '⚙️',
+      component: <Settings />
+    },
+    {
+      id: 'help',
+      label: 'Help',
+      icon: '❓',
+      component: <TroubleshootingInterface />
+    }
+  ];
 
-  React.useEffect(() => {
-    // Get app version and platform info
-    const loadAppInfo = async () => {
-      try {
-        const appVersion = await window.electronAPI.getVersion();
-        const appPlatform = await window.electronAPI.getPlatform();
-        setVersion(appVersion);
-        setPlatform(appPlatform);
-      } catch (error) {
-        console.error('Failed to load app info:', error);
-        setVersion('Error');
-        setPlatform('Error');
-      }
-    };
-
-    loadAppInfo();
-  }, []);
-
-  const handleDirectorySelected = (path: string) => {
-    setSelectedDirectory(path);
-    console.log('Directory selected:', path);
+  const handleNavigationChange = (viewId: string) => {
+    dispatch({ type: 'SET_CURRENT_VIEW', payload: viewId });
   };
 
-  const handleModelSelected = (mainModel: string | null, subModel: string | null) => {
-    setSelectedModels({ mainModel, subModel });
-    console.log('Models selected:', { mainModel, subModel });
-  };
+  const currentNavItem = navigationItems.find(item => item.id === state.currentView);
+  const currentComponent = currentNavItem?.component || <Dashboard />;
 
   return (
-    <div className="App">
-      <header className="App-header">
-        <div className="logo">
-          <h1>MaxSort</h1>
-          <div className="logo-icon">📁</div>
-        </div>
-        <div className="welcome-content">
-          <h2>AI-Powered File Organization</h2>
-          <p>Organize and rename your files intelligently with AI agents</p>
-          <div className="app-info">
-            <p>Version: {version} | Platform: {platform}</p>
-          </div>
-        </div>
-      </header>
-      
-      <main className="App-main">
-        <DirectoryPicker 
-          onDirectorySelected={handleDirectorySelected}
-        />
-        
-        <ModelSelector
-          onModelSelected={handleModelSelected}
-        />
-        
-        {selectedDirectory && (selectedModels.mainModel || selectedModels.subModel) && (
-          <div className="ready-status">
-            <h3>🎯 Ready for AI Organization</h3>
-            <div className="status-details">
-              <p>✅ Directory: {selectedDirectory}</p>
-              {selectedModels.mainModel && <p>✅ Main Agent: {selectedModels.mainModel}</p>}
-              {selectedModels.subModel && <p>✅ Sub Agent: {selectedModels.subModel}</p>}
-            </div>
-          </div>
-        )}
-      </main>
-    </div>
+    <AppLayout
+      navigationItems={navigationItems}
+      currentView={state.currentView}
+      onNavigationChange={handleNavigationChange}
+      systemStatus={state.systemStatus}
+      user={{ name: 'User' }}
+    >
+      {currentComponent}
+    </AppLayout>
+  );
+};
+
+const App: React.FC = () => {
+  const initialThemePreferences = loadThemePreferences();
+  
+  return (
+    <ErrorBoundary>
+      <ThemeProvider initialPreferences={initialThemePreferences}>
+        <HelpProvider>
+          <NotificationProvider>
+            <AppStateProvider>
+              <AppContent />
+            </AppStateProvider>
+          </NotificationProvider>
+        </HelpProvider>
+      </ThemeProvider>
+    </ErrorBoundary>
   );
 };
 

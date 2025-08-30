@@ -1,161 +1,157 @@
-.App {
-  text-align: center;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  min-height: 100vh;
-  display: flex;
-  flex-direction: column;
-  color: white;
+/* App.css - Global application styles */
+
+/* Reset and base styles */
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
     'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
     sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background-color: #f8fafc;
 }
 
-/* Sticky header that stays at top */
-.App-header {
-  position: sticky;
-  top: 0;
-  z-index: 100;
-  background: rgba(102, 126, 234, 0.95);
-  backdrop-filter: blur(10px);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+code {
+  font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New',
+    monospace;
+}
+
+/* Global utility classes */
+.placeholder-view {
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: 1rem 2rem;
-  max-width: 100%;
-  margin: 0;
-  box-shadow: 0 2px 20px rgba(0, 0, 0, 0.1);
-  -webkit-app-region: drag; /* Make header draggable on macOS/Windows */
-}
-
-/* Make interactive elements in header non-draggable */
-.App-header button,
-.App-header input,
-.App-header select,
-.App-header a {
-  -webkit-app-region: no-drag;
-}
-
-/* Updated main content area with constrained width */
-.App-main {
-  flex: 1;
-  padding: 2rem;
-  width: 100%;
-  max-width: 800px;
-  margin: 0 auto;
-  -webkit-app-region: no-drag; /* Ensure main content is not draggable */
-  overflow-y: auto; /* Allow scrolling in main content */
-}
-
-/* Updated logo styling for compact header */
-.logo {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  margin-bottom: 0.5rem;
-}
-
-.logo h1 {
-  font-size: 2rem;
-  margin: 0;
-  font-weight: 300;
-}
-
-.logo-icon {
-  font-size: 2rem;
-  animation: pulse 2s infinite;
-}
-
-@keyframes pulse {
-  0%, 100% { transform: scale(1); }
-  50% { transform: scale(1.1); }
-}
-
-/* Compact welcome content for header */
-.welcome-content h2 {
-  font-size: 1.4rem;
-  margin: 0.25rem 0;
-  font-weight: 400;
-}
-
-.welcome-content p {
-  font-size: 0.9rem;
-  margin: 0.25rem 0;
-  opacity: 0.9;
-}
-
-.app-info {
-  background: rgba(255, 255, 255, 0.1);
-  border-radius: 6px;
-  padding: 0.5rem;
-  margin: 0.5rem 0 0 0;
-  backdrop-filter: blur(10px);
-}
-
-.app-info p {
-  font-size: 0.8rem;
-  margin: 0;
-  font-family: 'Monaco', 'Menlo', monospace;
-  opacity: 0.8;
-}
-
-.getting-started {
-  background: rgba(255, 255, 255, 0.05);
-  border-radius: 8px;
-  padding: 1.5rem;
-  margin-top: 1rem;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-}
-
-.getting-started p {
-  font-size: 1rem;
-  margin: 0.8rem 0;
-  line-height: 1.6;
-}
-
-.directory-status {
+  justify-content: center;
+  min-height: 400px;
   text-align: center;
-  background: rgba(255, 255, 255, 0.1);
-  border-radius: 8px;
-  padding: 1rem;
-  margin-top: 2rem;
-  backdrop-filter: blur(10px);
+  color: #64748b;
+  padding: 48px 24px;
 }
 
-.directory-status p {
-  color: #a8e6a3;
+.placeholder-view h2 {
+  font-size: 24px;
   font-weight: 600;
-  margin: 0;
-  font-size: 1.1rem;
+  color: #374151;
+  margin-bottom: 12px;
 }
 
-.ready-status {
-  text-align: center;
-  background: rgba(40, 167, 69, 0.2);
-  border: 1px solid rgba(40, 167, 69, 0.4);
-  border-radius: 12px;
-  padding: 1.5rem;
-  margin: 1.5rem auto;
-  max-width: 650px;
-  backdrop-filter: blur(10px);
+.placeholder-view p {
+  font-size: 16px;
+  line-height: 1.5;
+  margin-bottom: 8px;
+  max-width: 600px;
 }
 
-.ready-status h3 {
-  color: #a8e6a3;
-  margin: 0 0 1rem 0;
-  font-size: 1.5rem;
-  font-weight: 600;
+/* Animation utilities */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
-.status-details {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
+@keyframes slideIn {
+  from {
+    transform: translateX(-10px);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
 }
 
-.status-details p {
-  color: #ffffff;
-  margin: 0;
-  font-size: 1rem;
-  opacity: 0.9;
+.fade-in {
+  animation: fadeIn 0.3s ease-out;
+}
+
+.slide-in {
+  animation: slideIn 0.3s ease-out;
+}
+
+/* Loading states */
+.loading-spinner {
+  display: inline-block;
+  width: 20px;
+  height: 20px;
+  border: 3px solid #f3f3f3;
+  border-top: 3px solid #3498db;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+/* Focus styles for accessibility */
+*:focus {
+  outline: 2px solid #3b82f6;
+  outline-offset: 2px;
+}
+
+*:focus:not(:focus-visible) {
+  outline: none;
+}
+
+/* High contrast mode support */
+@media (prefers-contrast: high) {
+  .app-layout {
+    border: 1px solid;
+  }
+  
+  .nav-item:hover,
+  .nav-item.active {
+    border: 2px solid;
+  }
+}
+
+/* Reduced motion support */
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* Dark mode styles (will be fully implemented later) */
+@media (prefers-color-scheme: dark) {
+  body {
+    background-color: #1a202c;
+    color: #e2e8f0;
+  }
+  
+  .placeholder-view {
+    color: #a0aec0;
+  }
+  
+  .placeholder-view h2 {
+    color: #e2e8f0;
+  }
+}
+
+/* Print styles */
+@media print {
+  .app-header,
+  .app-sidebar,
+  .app-footer {
+    display: none !important;
+  }
+  
+  .app-main {
+    margin: 0;
+    padding: 0;
+  }
 }

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { OllamaClient } from '../src/lib/ollama-client'
 
 // Mock fetch globally
@@ -9,8 +9,20 @@ describe('OllamaClient', () => {
   const mockFetch = fetch as any
 
   beforeEach(() => {
-    client = new OllamaClient()
+    // Create client with shorter retry delays for testing
+    client = new OllamaClient({
+      retryAttempts: 1,
+      retryDelay: 0,
+      timeout: 1000
+    })
     vi.clearAllMocks()
+  })
+
+  afterEach(() => {
+    // Ensure all health monitoring is stopped after each test
+    if (client) {
+      client.stopHealthMonitoring()
+    }
   })
 
   describe('testConnection', () => {
@@ -105,11 +117,22 @@ describe('OllamaClient', () => {
   })
 
   describe('health monitoring', () => {
+    afterEach(() => {
+      // Ensure monitoring is always stopped after each test
+      client.stopHealthMonitoring()
+    })
+
     it('should start health monitoring', async () => {
-      mockFetch.mockResolvedValue({
-        ok: true,
-        status: 200
-      })
+      // Mock both version and tags endpoints for health check
+      mockFetch
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: vi.fn().mockResolvedValue({ models: [] })
+        })
 
       client.startHealthMonitoring(1000)
 
@@ -129,15 +152,21 @@ describe('OllamaClient', () => {
       const healthSpy = vi.fn()
       client.on('health-update', healthSpy)
 
-      mockFetch.mockResolvedValue({
-        ok: true,
-        json: vi.fn().mockResolvedValue({ models: [] })
-      })
+      // Mock both endpoints that health check calls
+      mockFetch
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: vi.fn().mockResolvedValue({ models: [] })
+        })
 
       client.startHealthMonitoring(100)
 
       // Wait a bit for the first health check
-      await new Promise(resolve => setTimeout(resolve, 150))
+      await new Promise(resolve => setTimeout(resolve, 200))
 
       expect(healthSpy).toHaveBeenCalled()
 
