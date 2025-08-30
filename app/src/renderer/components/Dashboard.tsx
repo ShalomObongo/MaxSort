@@ -1,7 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import './Dashboard.css';
 import DirectoryPicker from './DirectoryPicker';
 import ModelSelector from './ModelSelector';
+import FileAnalysisResults from './FileAnalysisResults';
+import { ElectronAPI } from '../../types/electron';
 
 interface WorkflowStep {
   id: string;
@@ -10,6 +12,31 @@ interface WorkflowStep {
   icon: string;
   status: 'pending' | 'active' | 'completed' | 'error';
   component?: React.ReactNode;
+}
+
+interface AnalysisProgress {
+  requestId: string;
+  totalFiles: number;
+  processedFiles: number;
+  completedFiles: number;
+  failedFiles: number;
+  currentFile?: string;
+  currentAnalysisType?: string;
+  estimatedTimeRemaining: number;
+  phase: 'initializing' | 'analyzing' | 'completing' | 'complete' | 'error';
+  errorRate: number;
+}
+
+interface AnalysisSessionResult {
+  requestId: string;
+  totalFiles: number;
+  successfulFiles: number;
+  failedFiles: number;
+  results: any[];
+  totalExecutionTime: number;
+  averageExecutionTime: number;
+  completedAt: number;
+  errorSummary?: string[];
 }
 
 interface DashboardProps {
@@ -23,6 +50,14 @@ const Dashboard: React.FC<DashboardProps> = ({ onWorkflowComplete }) => {
     mainModel: string | null;
     subModel: string | null;
   }>({ mainModel: null, subModel: null });
+  
+  // Analysis state
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [analysisProgress, setAnalysisProgress] = useState<AnalysisProgress | null>(null);
+  const [analysisResults, setAnalysisResults] = useState<AnalysisSessionResult | null>(null);
+  const [analysisError, setAnalysisError] = useState<string | null>(null);
+  const [currentRequestId, setCurrentRequestId] = useState<string | null>(null);
+  const [scannedFileIds, setScannedFileIds] = useState<number[]>([]);
 
   const [workflowSteps, setWorkflowSteps] = useState<WorkflowStep[]>([
     {
@@ -76,6 +111,80 @@ const Dashboard: React.FC<DashboardProps> = ({ onWorkflowComplete }) => {
     setWorkflowSteps(updatedSteps);
   }, [currentStep]);
 
+  // Setup analysis event listeners
+  useEffect(() => {
+    const electronAPI = window.electronAPI;
+    if (!electronAPI) return;
+
+    // Analysis progress updates
+    const removeProgressListener = electronAPI.on?.('analysis:progressUpdate', (progress: AnalysisProgress) => {
+      console.log('Analysis progress update:', progress);
+      setAnalysisProgress(progress);
+      
+      // Update workflow step status during analysis
+      if (progress.phase === 'analyzing' && currentStep === 2) {
+        setWorkflowSteps(prev => prev.map((step, index) => 
+          index === 2 ? { ...step, status: 'active' } : step
+        ));
+      }
+    });
+
+    // Analysis completion
+    const removeCompleteListener = electronAPI.on?.('analysis:complete', (result: AnalysisSessionResult) => {
+      console.log('Analysis complete:', result);
+      setAnalysisResults(result);
+      setIsAnalyzing(false);
+      setAnalysisProgress(null);
+      
+      // Move to next step on successful completion
+      if (result.successfulFiles > 0) {
+        setCurrentStep(3); // Move to Review Suggestions
+      }
+    });
+
+    // Analysis errors
+    const removeErrorListener = electronAPI.on?.('analysis:error', (error: any) => {
+      console.error('Analysis error:', error);
+      setAnalysisError(error.error?.message || 'Analysis failed');
+      setIsAnalyzing(false);
+      
+      // Mark scan step as error
+      setWorkflowSteps(prev => prev.map((step, index) => 
+        index === 2 ? { ...step, status: 'error' } : step
+      ));
+    });
+
+    return () => {
+      removeProgressListener?.();
+      removeCompleteListener?.();
+      removeErrorListener?.();
+    };
+  }, [currentStep]);
+
+  // Load scanned files when directory changes
+  useEffect(() => {
+    const loadScanResults = async () => {
+      if (!selectedDirectory) {
+        setScannedFileIds([]);
+        return;
+      }
+
+      try {
+        const electronAPI = window.electronAPI;
+        if (electronAPI.getScanResults) {
+          const scanResults = await electronAPI.getScanResults(selectedDirectory);
+          const fileIds = scanResults?.map((file: any) => file.id).filter(Boolean) || [];
+          setScannedFileIds(fileIds);
+        }
+      } catch (error) {
+        console.error('Failed to load scan results:', error);
+        setScannedFileIds([]);
+      }
+    };
+
+    loadScanResults();
+  }, [selectedDirectory]);
+
   const handleDirectorySelected = (path: string) => {
     setSelectedDirectory(path);
     if (path && selectedModels.mainModel) {
@@ -89,6 +198,79 @@ const Dashboard: React.FC<DashboardProps> = ({ onWorkflowComplete }) => {
       setCurrentStep(Math.max(currentStep, 1)); // Move to directory selection
     }
   };
+
+  // Analysis handlers
+  const handleStartAnalysis = useCallback(async () => {
+    if (!selectedDirectory || !selectedModels.mainModel || scannedFileIds.length === 0) {
+      setAnalysisError('Missing requirements for analysis: directory, model, or scanned files');
+      return;
+    }
+
+    try {
+      setIsAnalyzing(true);
+      setAnalysisError(null);
+      setAnalysisResults(null);
+      
+      const requestId = `analysis-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+      setCurrentRequestId(requestId);
+
+      const electronAPI = window.electronAPI;
+      if (!electronAPI.startFileAnalysis) {
+        throw new Error('Analysis functionality not available');
+      }
+
+      console.log('Starting analysis with:', {
+        requestId,
+        fileIds: scannedFileIds,
+        directory: selectedDirectory,
+        model: selectedModels.mainModel
+      });
+
+      await electronAPI.startFileAnalysis(scannedFileIds, 'rename-suggestions', {
+        requestId,
+        isInteractive: true,
+        priority: 'high',
+        modelName: selectedModels.mainModel
+      });
+
+      // Update UI to show analysis is starting
+      setWorkflowSteps(prev => prev.map((step, index) => 
+        index === 2 ? { ...step, status: 'active' } : step
+      ));
+
+    } catch (error) {
+      console.error('Failed to start analysis:', error);
+      setAnalysisError(error instanceof Error ? error.message : 'Failed to start analysis');
+      setIsAnalyzing(false);
+      
+      setWorkflowSteps(prev => prev.map((step, index) => 
+        index === 2 ? { ...step, status: 'error' } : step
+      ));
+    }
+  }, [selectedDirectory, selectedModels.mainModel, scannedFileIds]);
+
+  const handleCancelAnalysis = useCallback(async () => {
+    if (!currentRequestId) return;
+
+    try {
+      const electronAPI = window.electronAPI;
+      if (electronAPI.cancelFileAnalysis) {
+        await electronAPI.cancelFileAnalysis(currentRequestId);
+      }
+      
+      setIsAnalyzing(false);
+      setAnalysisProgress(null);
+      setCurrentRequestId(null);
+      
+    } catch (error) {
+      console.error('Failed to cancel analysis:', error);
+    }
+  }, [currentRequestId]);
+
+  const handleRetryAnalysis = useCallback(() => {
+    setAnalysisError(null);
+    handleStartAnalysis();
+  }, [handleStartAnalysis]);
 
   const handleNextStep = () => {
     if (currentStep < workflowSteps.length - 1) {
@@ -119,8 +301,10 @@ const Dashboard: React.FC<DashboardProps> = ({ onWorkflowComplete }) => {
         return selectedModels.mainModel !== null;
       case 1: // Select Directory  
         return selectedDirectory !== '';
-      case 2: // Scan (would need scan completion)
-        return selectedDirectory !== '' && selectedModels.mainModel !== null;
+      case 2: // Scan (need analysis completion)
+        return analysisResults !== null && analysisResults.successfulFiles > 0;
+      case 3: // Review (can proceed if results exist)
+        return analysisResults !== null;
       default:
         return false;
     }
@@ -150,25 +334,143 @@ const Dashboard: React.FC<DashboardProps> = ({ onWorkflowComplete }) => {
         return (
           <div className="step-content">
             <div className="scan-ready">
-              <h3>Ready to Scan</h3>
+              <h3>AI Analysis</h3>
               <div className="scan-summary">
                 <p><strong>Directory:</strong> {selectedDirectory}</p>
                 <p><strong>Main Model:</strong> {selectedModels.mainModel}</p>
                 {selectedModels.subModel && (
                   <p><strong>Sub Model:</strong> {selectedModels.subModel}</p>
                 )}
+                <p><strong>Files to analyze:</strong> {scannedFileIds.length}</p>
               </div>
-              <button 
-                className="action-button primary"
-                onClick={() => {
-                  // This will be implemented when file analysis is integrated
-                  console.log('Starting scan...');
-                  handleNextStep();
-                }}
-              >
-                🔍 Start Scan
-              </button>
+
+              {/* Analysis Progress */}
+              {isAnalyzing && analysisProgress && (
+                <div className="analysis-progress">
+                  <h4>Analysis in Progress</h4>
+                  <div className="progress-info">
+                    <p><strong>Phase:</strong> {analysisProgress.phase}</p>
+                    <p><strong>Progress:</strong> {analysisProgress.processedFiles} / {analysisProgress.totalFiles} files</p>
+                    {analysisProgress.currentFile && (
+                      <p><strong>Current file:</strong> {analysisProgress.currentFile}</p>
+                    )}
+                    <p><strong>Success rate:</strong> {Math.round((1 - analysisProgress.errorRate) * 100)}%</p>
+                    {analysisProgress.estimatedTimeRemaining > 0 && (
+                      <p><strong>Estimated time remaining:</strong> {Math.round(analysisProgress.estimatedTimeRemaining)}s</p>
+                    )}
+                  </div>
+                  <div className="progress-bar">
+                    <div 
+                      className="progress-fill"
+                      style={{ 
+                        width: `${(analysisProgress.processedFiles / Math.max(analysisProgress.totalFiles, 1)) * 100}%` 
+                      }}
+                    />
+                  </div>
+                  <button 
+                    className="action-button secondary"
+                    onClick={handleCancelAnalysis}
+                  >
+                    Cancel Analysis
+                  </button>
+                </div>
+              )}
+
+              {/* Analysis Error */}
+              {analysisError && (
+                <div className="analysis-error">
+                  <h4>Analysis Failed</h4>
+                  <p className="error-message">{analysisError}</p>
+                  <div className="error-actions">
+                    <button 
+                      className="action-button primary"
+                      onClick={handleRetryAnalysis}
+                    >
+                      Retry Analysis
+                    </button>
+                    <button 
+                      className="action-button secondary"
+                      onClick={() => setAnalysisError(null)}
+                    >
+                      Dismiss
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Analysis Results Summary */}
+              {analysisResults && (
+                <div className="analysis-summary">
+                  <h4>Analysis Complete</h4>
+                  <div className="summary-stats">
+                    <div className="stat-item">
+                      <span className="stat-value">{analysisResults.totalFiles}</span>
+                      <span className="stat-label">Files Analyzed</span>
+                    </div>
+                    <div className="stat-item">
+                      <span className="stat-value">{analysisResults.successfulFiles}</span>
+                      <span className="stat-label">Suggestions Generated</span>
+                    </div>
+                    <div className="stat-item">
+                      <span className="stat-value">{Math.round(analysisResults.averageExecutionTime / 1000)}s</span>
+                      <span className="stat-label">Avg. Time per File</span>
+                    </div>
+                    <div className="stat-item">
+                      <span className="stat-value">{Math.round((analysisResults.successfulFiles / Math.max(analysisResults.totalFiles, 1)) * 100)}%</span>
+                      <span className="stat-label">Success Rate</span>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Start Analysis Button */}
+              {!isAnalyzing && !analysisResults && (
+                <button 
+                  className="action-button primary"
+                  onClick={handleStartAnalysis}
+                  disabled={scannedFileIds.length === 0}
+                >
+                  🔍 Start AI Analysis
+                </button>
+              )}
+
+              {/* Restart Analysis Button */}
+              {!isAnalyzing && analysisResults && (
+                <button 
+                  className="action-button secondary"
+                  onClick={handleStartAnalysis}
+                >
+                  🔄 Restart Analysis
+                </button>
+              )}
             </div>
+          </div>
+        );
+
+      case 3: // Review Suggestions
+        return (
+          <div className="step-content">
+            {analysisResults && scannedFileIds.length > 0 ? (
+              <FileAnalysisResults
+                fileIds={scannedFileIds}
+                requestId={currentRequestId || undefined}
+                analysisType="rename-suggestions"
+                showAnalysisProgress={false}
+                allowBatchOperations={true}
+                maxSuggestionsPerFile={5}
+              />
+            ) : (
+              <div className="placeholder-content">
+                <h3>No Analysis Results</h3>
+                <p>Please complete the analysis step first to review suggestions.</p>
+                <button 
+                  className="action-button primary"
+                  onClick={() => setCurrentStep(2)}
+                >
+                  ← Back to Analysis
+                </button>
+              </div>
+            )}
           </div>
         );
       
